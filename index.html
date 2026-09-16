@@ -171,6 +171,8 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
 .typebox .row button{flex:1;padding:10px;border-radius:11px;font-size:13.5px;font-weight:700}
 .typebox .row .go{background:var(--pri);color:#fff}
 .typebox .row .no{border:1px solid var(--line);color:var(--tx2)}
+.fillnote{margin:-4px 14px 10px;padding:7px 10px;border-radius:9px;background:var(--mid-w);border:1px solid var(--mid-b);color:var(--mid);font-size:11.5px;font-weight:700;line-height:1.5}
+.more{margin-left:auto;font-size:11.5px;font-weight:800;color:var(--pri);white-space:nowrap}
 .hist{display:flex;gap:5px;flex-wrap:wrap;margin:0 14px 10px}
 .hb{font-size:11px;font-weight:800;padding:3px 8px;border-radius:7px;background:var(--line2);color:var(--tx3)}
 .hb.pass{background:var(--ok-w);color:var(--ok)}
@@ -1040,6 +1042,8 @@ function sentHtml(s,i){
         '<button class="mic" data-mic="'+s.id+'">🎙</button>'+
         '<button class="keyb" data-keyb="'+s.id+'" title="타이핑으로 입력">⌨</button>'+
       '</div></div>'+
+    (s.filled ? '<div class="fillnote">✎ 빈칸을 채워 완성한 문장이에요'+
+      (s.filled_part ? ' — <b>'+esc(s.filled_part)+'</b>' : '')+'</div>' : '')+
     (hs.length > 1 ? histHtml(hs) : "")+
     (S.retry[s.id] ? '<div class="retryhint">모범 해석은 잠깐 덮어뒀어요. 영어 문장만 보고 다시 해석해 보세요 — 이번 점수도 따로 남습니다.</div>' : "")+
     (S.typing[s.id] ? typeHtml(s.id) : "")+
@@ -1069,6 +1073,7 @@ function barHtml(r,s){
         '<span class="tg '+(mo?"y":"n")+'">뜻 '+(mo?"○":"✕")+'</span>'+
         '<span class="tg '+(so?"y":"n")+'">구조 '+(so?"○":"✕")+'</span>'+
       '</span><span class="sm">'+esc(r.summary)+'</span></span>'+
+      '<span class="more">'+(open?"접기":"자세히 보기")+'</span>'+
       '<span class="arw">▼</span></button>'+
     (open ? detailHtml(r,s) : "");
 }
@@ -1413,8 +1418,12 @@ async function finish(c, transcript, audio, typed){
     delete S.draft[id];
     const hs = (S.hist[id] = S.hist[id] || []);
     hs.push({ n: r.try_no || hs.length+1, score: r.score, verdict: r.verdict });
-    S.open[id] = r.verdict !== "pass";
+    S.open[id] = false;   // 자동으로 펼치지 않는다 - 보던 화면이 밀리지 않게
+    const anch = document.querySelector('[data-id="'+id+'"]');
+    const above = anch ? anch.getBoundingClientRect().top < 0 : false;
+    const h0 = document.body.scrollHeight;
     resetMic(id); redraw(id); refreshFoot();
+    if (above) window.scrollBy(0, document.body.scrollHeight - h0);  // 위쪽 카드가 커져도 제자리
     if (S.passage) { S.tried[S.passage.id] = (S.tried[S.passage.id]||0)+1;
       if (S.qlist.length) { const v=$("#qsel").value; renderQsel(); $("#qsel").value=v; } }
   } catch(e){
