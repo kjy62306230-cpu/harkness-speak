@@ -123,7 +123,7 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
 .menu button.danger{color:var(--bad)}
 
 /* 학습 상단 */
-.modebar{position:sticky;top:52px;z-index:30;background:var(--bg);padding:10px 0 9px;border-bottom:1px solid var(--line2)}
+.modebar{position:sticky;top:calc(55px + env(safe-area-inset-top));z-index:30;background:var(--bg);padding:10px 0 9px;border-bottom:1px solid var(--line2)}
 .qsel{display:flex;gap:8px;align-items:center;margin-bottom:9px}
 .qsel select{flex:1;min-width:0;padding:11px 12px;font-size:14.5px;font-weight:700;border-radius:12px;
   border:1px solid var(--pri);background:var(--pri-w);color:var(--pri);outline:none;
@@ -161,7 +161,7 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
 .keyb{width:46px;height:30px;border-radius:9px;flex:none;display:grid;place-items:center;
   background:var(--line2);color:var(--tx3);font-size:14px;align-self:flex-start;margin-top:6px}
 .keyb:active{background:var(--line)}
-.inputcol{display:flex;flex-direction:column;align-items:center;flex:none}
+.inputcol{display:flex;flex-direction:column;align-items:center;flex:none;align-self:flex-start}
 .typebox{margin:0 14px 14px}
 .typebox textarea{width:100%;min-height:74px;padding:11px 12px;border-radius:12px;border:1px solid var(--pri);
   background:var(--card);color:var(--tx);font-size:14.5px;line-height:1.6;outline:none;resize:vertical}
@@ -415,7 +415,7 @@ if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc =
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 const esc = (s) => String(s == null ? "" : s)
-  .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 
 const S = {
   token:null, me:null, admin:false,
@@ -425,6 +425,7 @@ const S = {
   tried:{},            // passage_id -> 시도 횟수
   hist:{},             // sentence_id -> [{n,score,verdict}]  1차→2차 점수
   typing:{}, retry:{}, // sentence_id -> 타이핑 입력창 열림 / 정답 덮고 재도전 중
+  draft:{},            // sentence_id -> 타이핑 중이던 글 (redraw 돼도 안 지워지게)
   adminData:null, adminTab:"students",
   nav:{ level:"list", rows:[] },
 };
@@ -451,7 +452,7 @@ function go(v){
 }
 /* 학습 중이면 문항 목록으로, 목록이면 홈으로 */
 $("#back").onclick = () => {
-  stopRec();
+  abortRec();
   if (S.view === "study" && S.exam) { renderItems(); go("items"); }
   else go("home");
 };
@@ -461,7 +462,7 @@ function doLogout(){
   if (!confirm("로그아웃 할까요?")) return;
   fn("tr-auth", { action:"logout", token:S.token }).catch(()=>{});
   S.token=null; S.me=null; S.admin=false; save("token",null);
-  S.exam=null; S.qlist=[]; S.passage=null; S.sentences=[]; S.results={}; S.hist={}; S.typing={}; S.retry={};
+  S.exam=null; S.qlist=[]; S.passage=null; S.sentences=[]; S.results={}; S.hist={}; S.typing={}; S.retry={}; S.draft={};
   resetLogin(); go("login");
 }
 $("#logout").onclick = doLogout;
@@ -646,7 +647,7 @@ async function loadLists(){
     '<button class="pitem" data-solo="'+p.id+'"><div class="t"><b>'+esc(p.title)+'</b><span>'+
     new Date(p.created_at).toLocaleDateString("ko-KR")+'</span></div>'+
     '<span class="n">'+p.sentence_count+'문장</span></button>').join("");
-  $$("[data-solo]").forEach(b => b.onclick = () => { S.exam=null; openPassage(b.dataset.solo); });
+  $$("[data-solo]").forEach(b => b.onclick = () => { S.exam=null; S.qlist=[]; openPassage(b.dataset.solo); });
 }
 /* 선생님이거나 본인이 올린 자료면 이름 바꾸기·삭제를 할 수 있다 */
 function canEditExam(x){
@@ -923,10 +924,10 @@ function renderQsel(){
     return '<option value="'+q.id+'">'+esc(q.title)+tag+mark+'</option>';
   }).join("");
 }
-$("#qsel").onchange = (e) => { stopRec(); openPassage(e.target.value); };
+$("#qsel").onchange = (e) => { abortRec(); openPassage(e.target.value); };
 
 async function openPassage(id){
-  S.results={}; S.open={}; S.filter="all"; S.hist={}; S.typing={}; S.retry={};
+  S.results={}; S.open={}; S.filter="all"; S.hist={}; S.typing={}; S.retry={}; S.draft={};
   const meta = S.qlist.find(q=>q.id===id);
   $("#qselBox").classList.toggle("hide", !S.qlist.length);
   $("#slist").innerHTML = '<div class="card" style="padding:22px;text-align:center"><span class="spin"></span>'+
@@ -964,17 +965,17 @@ async function openPassage(id){
 
 function startPassage(passage, sentences){
   S.passage = passage; S.sentences = sentences;
-  S.results={}; S.open={}; S.filter="all"; S.qlist=[]; S.hist={}; S.typing={}; S.retry={};
+  S.results={}; S.open={}; S.filter="all"; S.qlist=[]; S.hist={}; S.typing={}; S.retry={}; S.draft={};
   $("#qselBox").classList.add("hide");
   renderStudy(); go("study");
 }
 
 /* ================= 학습 ================= */
 $$(".seg button").forEach(b => b.onclick = () => {
-  stopRec();
+  abortRec();
   $$(".seg button").forEach(x=>x.classList.remove("on"));
   b.classList.add("on"); S.mode=b.dataset.mode; S.results={}; S.open={}; S.filter="all";
-  S.hist={}; S.typing={}; S.retry={};
+  S.hist={}; S.typing={}; S.retry={}; S.draft={};
   save("mode", S.mode);
   if (S.passage) openPassage(S.passage.id);
 });
@@ -992,8 +993,24 @@ function renderStudy(){
   bindSent();
 }
 
+/** 채점이 끝날 때마다 하단 요약(완료 수 · 틀린 문장만 다시)을 다시 그린다.
+    예전에는 renderStudy 때만 그려서, 첫 지문을 다 풀어도 버튼이 끝내 안 나타났다. */
+function refreshFoot(){
+  const vals = Object.values(S.results);
+  const done = vals.length, tot = S.sentences.length;
+  const wrong = vals.filter(r=>r.verdict!=="pass").length;
+  $("#progbar").style.width = (tot ? done/tot*100 : 0)+"%";
+  $("#progtx").textContent = done+"/"+tot;
+  const el = document.querySelector("[data-foot]");
+  if (!el) return;
+  const tmp = document.createElement("div");
+  tmp.innerHTML = footHtml(done, tot, wrong);
+  el.replaceWith(tmp.firstElementChild);
+  bindSent();
+}
+
 function footHtml(done, tot, wrong){
-  let h = '<div class="card" style="padding:14px;margin-top:4px">';
+  let h = '<div class="card" data-foot="1" style="padding:14px;margin-top:4px">';
   if (done) {
     h += '<b style="display:block;font-size:14px;margin-bottom:11px">'+done+'문장 완료'+(wrong?' · 아직 '+wrong+'개 남음':' · 전부 통과 👏')+'</b>';
     h += '<div class="again" style="margin:0">';
@@ -1037,7 +1054,7 @@ function histHtml(hs){
 
 function typeHtml(id){
   const ph = S.mode==="en2ko" ? "해석을 한국어로 적어보세요" : "영어로 적어보세요";
-  return '<div class="typebox"><textarea data-ta="'+id+'" placeholder="'+ph+'"></textarea>'+
+  return '<div class="typebox"><textarea data-ta="'+id+'" placeholder="'+ph+'">'+esc(S.draft[id]||"")+'</textarea>'+
     '<div class="row"><button class="no" data-typeno="'+id+'">취소</button>'+
     '<button class="go" data-typego="'+id+'">제출하고 채점</button></div></div>';
 }
@@ -1081,6 +1098,7 @@ function detailHtml(r,s){
 }
 
 function redraw(id){
+  if (isBusy(id)) return;          // 녹음·채점 중인 카드를 갈아엎지 않는다
   const s = S.sentences.find(x=>x.id===id);
   const card = document.querySelector('[data-id="'+id+'"]');
   if (!s || !card) return;
@@ -1091,7 +1109,12 @@ function redraw(id){
 }
 
 function bindSent(){
-  $$("[data-mic]").forEach(b => b.onclick = e => { e.stopPropagation(); toggleMic(b.dataset.mic); });
+  $$("[data-mic]").forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const id = b.dataset.mic;
+    if (S.typing[id] && !isBusy(id)) { S.typing[id] = false; redraw(id); }
+    toggleMic(id);
+  });
   $$("[data-bar]").forEach(b => b.onclick = () => {
     const id=b.dataset.bar; S.open[id]=!S.open[id]; redraw(id);
     if (S.open[id]) setTimeout(()=>{ const el=document.querySelector('[data-bar="'+id+'"]'); if(el) el.scrollIntoView({behavior:"smooth",block:"nearest"}); },60);
@@ -1108,92 +1131,149 @@ function bindSent(){
   $$("[data-keyb]").forEach(b => b.onclick = e => {
     e.stopPropagation();
     const id = b.dataset.keyb;
-    if (S.recording) stopRec();
+    if (cur && cur.grading) return;                       // 채점 중에는 못 바꾼다
+    if (cur) abortRec();                                  // 녹음 중이면 그 음성은 버린다
     S.typing[id] = !S.typing[id];
     redraw(id);
     const ta = document.querySelector('[data-ta="'+id+'"]');
     if (ta) { ta.focus(); ta.scrollIntoView({behavior:"smooth",block:"center"}); }
   });
+  /* 쓰던 글은 상태에 계속 담아둔다 — redraw 가 돌아도 안 지워지게 */
+  $$("[data-ta]").forEach(t => t.oninput = () => { S.draft[t.dataset.ta] = t.value; });
   $$("[data-typeno]").forEach(b => b.onclick = () => {
-    const id = b.dataset.typeno; S.typing[id] = false; redraw(id);
+    const id = b.dataset.typeno; S.typing[id] = false; delete S.draft[id]; redraw(id);
   });
   $$("[data-typego]").forEach(b => b.onclick = () => {
     const id = b.dataset.typego;
     const ta = document.querySelector('[data-ta="'+id+'"]');
     const tx = ta ? ta.value.trim() : "";
     if (!tx) { if(ta) ta.focus(); return; }
+    S.draft[id] = tx;
     S.typing[id] = false; redraw(id);
-    finish(id, tx, null, true);
+    finish(typedSession(id), tx, null, true);
   });
   $$("[data-next]").forEach(b => b.onclick = () => {
-    const cur=b.dataset.next;
-    const list = S.filter==="wrong" ? S.sentences.filter(s=>S.results[s.id]&&S.results[s.id].verdict!=="pass") : S.sentences;
-    const i=list.findIndex(x=>x.id===cur), nx=list[i+1];
-    S.open[cur]=false; redraw(cur);
-    if (!nx) { alert("마지막 문장이에요. 수고했어요 👏"); return; }
+    const cid=b.dataset.next;
+    /* 방금 통과한 문장은 wrong 목록에서 빠져 findIndex 가 -1 이 된다.
+       그때 list[0] 으로 되돌아가 맨 위로 역주행하던 것을 막는다. */
+    const list = S.filter==="wrong"
+      ? S.sentences.filter(s => S.results[s.id] && (S.results[s.id].verdict!=="pass" || s.id===cid))
+      : S.sentences;
+    const i=list.findIndex(x=>x.id===cid), nx=(i>=0 ? list[i+1] : null);
+    S.open[cid]=false; redraw(cid);
+    if (!nx) { alert("여기가 마지막이에요. 수고했어요 👏"); return; }
     const el=document.querySelector('[data-id="'+nx.id+'"]');
     if (el) el.scrollIntoView({behavior:"smooth",block:"center"});
     setTimeout(()=>toggleMic(nx.id),380);
   });
-  $$("[data-filter]").forEach(b => b.onclick = () => { S.filter=b.dataset.filter; renderStudy(); window.scrollTo(0,0); });
+  $$("[data-filter]").forEach(b => b.onclick = () => { abortRec(); S.filter=b.dataset.filter; renderStudy(); window.scrollTo(0,0); });
   $$("[data-reset]").forEach(b => b.onclick = () => {
+    abortRec();
     if (!confirm("이 화면의 채점 결과를 지우고 처음부터 다시 풀까요?\n(지난 기록은 '내 기록'에 그대로 남아요)")) return;
-    S.results={}; S.open={}; S.filter="all"; S.hist={}; S.typing={}; S.retry={};
+    S.results={}; S.open={}; S.filter="all"; S.hist={}; S.typing={}; S.retry={}; S.draft={};
     renderStudy(); window.scrollTo(0,0);
   });
-  $$("[data-nextq]").forEach(b => b.onclick = () => { stopRec(); openPassage(b.dataset.nextq); });
+  $$("[data-nextq]").forEach(b => b.onclick = () => { abortRec(); openPassage(b.dataset.nextq); });
 }
 
 /* ================= 음성 ================= */
+/* 세션 격리: 문장마다 독립된 녹음 세션을 만들고, 세션이 바뀌면
+   늦게 도착한 이벤트(onend/onstop/onresult)는 전부 버린다.
+   예전에는 rec/finalTx 가 전역 하나라, 다른 문장 마이크를 누르면
+   앞 문장의 onend 가 새 인식기를 건드려 뒤 문장이 영영 채점되지 않았다. */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
             (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-let rec=null, mr=null, chunks=[], curId=null, finalTx="", useFallback=(!SR||IOS), userStopped=false, restarts=0;
+let useFallback = (!SR || IOS);
+let sess = 0;      // 세션 일련번호
+let cur = null;    // 지금 녹음 중이거나 채점 중인 세션
+
 const micEl = id => document.querySelector('[data-mic="'+id+'"]');
 const liveEl = id => document.querySelector('[data-live="'+id+'"]');
+/** 이 문장이 지금 녹음/채점 중인가 — redraw 가 화면을 갈아엎지 않도록 막는 데 쓴다 */
+const isBusy = id => !!(cur && cur.id === id);
 
-function toggleMic(id){
-  if (S.recording && curId === id) { stopRec(); return; }
-  if (S.recording) stopRec();
-  startRec(id);
-}
 function setLive(id,text,cls){
   const el = liveEl(id); if(!el) return;
+  el.classList.remove("hide");
   el.className = "live" + (cls ? " "+cls : "");
   el.textContent = text;
 }
+function resetMic(id){
+  const m=micEl(id); if(m){ m.classList.remove("rec","busy"); m.textContent="🎙"; }
+  const card=document.querySelector('[data-id="'+id+'"]'); if(card) card.classList.remove("act");
+}
+
+/** 세션을 즉시 죽인다. 채점은 하지 않는다. */
+function killSession(c, msg){
+  if (!c || c.aborted) return;
+  c.aborted = true;
+  try { if (c.rec) { c.rec.onend=null; c.rec.onresult=null; c.rec.onerror=null;
+                     if (c.rec.abort) c.rec.abort(); else c.rec.stop(); } } catch(e){}
+  try { if (c.mr && c.mr.state === "recording") { c.mr.onstop=null; c.mr.stop(); } } catch(e){}
+  try { if (c.stream) c.stream.getTracks().forEach(t=>t.stop()); } catch(e){}
+  if (cur === c) { cur = null; S.recording = false; }
+  resetMic(c.id);
+  if (msg) setLive(c.id, msg, "empty");
+  else { const lv = liveEl(c.id); if (lv) lv.classList.add("hide"); }
+}
+/** 화면 이동·필터 전환 등에서 녹음을 그냥 버릴 때 */
+function abortRec(msg){ killSession(cur, msg); }
+
+function toggleMic(id){
+  if (cur && cur.id === id) {
+    if (cur.grading) return;                     // 채점 중에는 아무 반응도 하지 않는다
+    stopRec(); return;
+  }
+  if (cur) abortRec("녹음을 취소했어요.");        // 다른 문장으로 옮겨가면 앞 녹음은 버린다
+  startRec(id);
+}
+
+/** 학생이 ■ 를 눌러 스스로 끝낸 경우 — 여기서만 채점으로 넘어간다 */
+function stopRec(){
+  const c = cur;
+  if (!c || c.aborted || c.grading) return;
+  c.userStopped = true;
+  if (c.rec) { try{ c.rec.stop(); }catch(e){ finish(c, c.finalTx.trim()); } }
+  else if (c.mr && c.mr.state === "recording") { try{ c.mr.stop(); }catch(e){ finish(c, ""); } }
+  else finish(c, c.finalTx ? c.finalTx.trim() : "");
+}
+
 async function startRec(id){
-  curId=id; finalTx=""; S.recording=true; userStopped=false; restarts=0;
-  const m=micEl(id); if(m){ m.classList.add("rec"); m.textContent="■"; }
+  const c = { n: ++sess, id, rec:null, mr:null, stream:null, chunks:[],
+              finalTx:"", userStopped:false, restarts:0, aborted:false, grading:false };
+  cur = c; S.recording = true;
+  const m=micEl(id); if(m){ m.classList.remove("busy"); m.classList.add("rec"); m.textContent="■"; }
   const card=document.querySelector('[data-id="'+id+'"]'); if(card) card.classList.add("act");
   const what = S.mode==="en2ko" ? "한국어로 해석해 보세요" : "영어로 말해 보세요";
   setLive(id, useFallback ? "녹음 중 — "+what+". 다 말했으면 ■ 를 누르세요" : "듣고 있어요 — "+what, "empty");
 
   if (!useFallback) {
     try {
-      rec = new SR();
+      const rec = new SR(); c.rec = rec;
       rec.lang = S.mode==="en2ko" ? "ko-KR" : "en-US";
       rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
       rec.onresult = e => {
+        if (c.aborted || cur !== c) return;
         let itm="";
         for (let i=e.resultIndex;i<e.results.length;i++){
           const t=e.results[i][0].transcript;
-          if (e.results[i].isFinal) finalTx+=t; else itm+=t;
+          if (e.results[i].isFinal) c.finalTx+=t; else itm+=t;
         }
-        setLive(id,(finalTx+itm).trim()||"…");
+        setLive(id,(c.finalTx+itm).trim()||"…");
       };
       rec.onerror = e => {
+        if (c.aborted || cur !== c) return;
         if (e.error==="not-allowed"||e.error==="service-not-allowed"){
-          resetMic(id); S.recording=false;
-          setLive(id,"마이크 권한이 필요해요. 주소창의 자물쇠 → 마이크 허용을 눌러주세요.","empty"); return;
+          killSession(c, "마이크 권한이 필요해요. 주소창의 자물쇠 → 마이크 허용을 눌러주세요."); return;
         }
         if (e.error==="no-speech") return;
         useFallback = true;
       };
       rec.onend = () => {
-        if (!S.recording) return;
-        if (userStopped || finalTx.trim()) { finish(id, finalTx.trim()); return; }
-        if (restarts++ < 3) { try{ rec.start(); }catch(err){ finish(id,""); } } else finish(id,"");
+        if (c.aborted || cur !== c) return;
+        if (c.userStopped || c.finalTx.trim()) { finish(c, c.finalTx.trim()); return; }
+        if (c.restarts++ < 3) { try{ rec.start(); }catch(err){ finish(c,""); } } else finish(c,"");
       };
       rec.start(); return;
     } catch(err){ useFallback = true; }
@@ -1201,64 +1281,77 @@ async function startRec(id){
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({audio:true});
-    chunks=[];
+    if (c.aborted || cur !== c) { stream.getTracks().forEach(t=>t.stop()); return; }
+    c.stream = stream;
     const type = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
-    mr = new MediaRecorder(stream,{mimeType:type});
-    mr.ondataavailable = e => { if(e.data.size) chunks.push(e.data); };
+    const mr = new MediaRecorder(stream,{mimeType:type}); c.mr = mr;
+    mr.ondataavailable = e => { if(e.data.size) c.chunks.push(e.data); };
     mr.onstop = async () => {
-      stream.getTracks().forEach(t=>t.stop());
-      const b64 = await new Promise(r=>{ const f=new FileReader(); f.onload=()=>r(f.result.split(",")[1]); f.readAsDataURL(new Blob(chunks,{type})); });
-      finish(id,"",{mime:type,data:b64});
+      try { stream.getTracks().forEach(t=>t.stop()); } catch(e){}
+      if (c.aborted || cur !== c) return;
+      if (!c.chunks.length) { finish(c, ""); return; }
+      const b64 = await new Promise(r=>{ const f=new FileReader();
+        f.onload=()=>r(String(f.result).split(",")[1]); f.readAsDataURL(new Blob(c.chunks,{type})); });
+      if (c.aborted || cur !== c) return;
+      finish(c,"",{mime:type,data:b64});
     };
     mr.start();
   } catch(err){
-    resetMic(id); S.recording=false;
-    setLive(id,"마이크를 사용할 수 없어요. 브라우저에서 마이크 권한을 허용해 주세요.","empty");
+    killSession(c, "마이크를 사용할 수 없어요. 브라우저에서 마이크 권한을 허용해 주세요.");
   }
 }
-function stopRec(){
-  if (!S.recording) return;
-  userStopped = true;
-  if (rec) { try{ rec.stop(); }catch(e){} }
-  else if (mr && mr.state==="recording") { try{ mr.stop(); }catch(e){} }
-  else S.recording = false;
-}
-function resetMic(id){ const m=micEl(id); if(m){ m.classList.remove("rec","busy"); m.textContent="🎙"; } }
 
-async function finish(id, transcript, audio, typed){
-  S.recording=false; rec=null; mr=null;
-  if (!transcript && !audio) { resetMic(id); setLive(id,"아무 말도 들리지 않았어요. 다시 눌러주세요.","empty"); return; }
+/** 타이핑 제출도 같은 파이프라인을 타되, 녹음 없는 세션을 하나 만든다 */
+function typedSession(id){
+  if (cur) abortRec();
+  const c = { n: ++sess, id, rec:null, mr:null, stream:null, chunks:[],
+              finalTx:"", userStopped:true, restarts:0, aborted:false, grading:false };
+  cur = c; return c;
+}
+
+async function finish(c, transcript, audio, typed){
+  if (!c || c.aborted) return;
+  const id = c.id;
+  c.grading = true; S.recording = false;
+
+  if (!transcript && !audio) {
+    cur = null; c.aborted = true;
+    resetMic(id);
+    setLive(id, "아무 말도 들리지 않았어요. 다시 눌러주세요.", "empty");
+    return;
+  }
   const m=micEl(id);
   if(m){ m.classList.remove("rec"); m.classList.add("busy"); m.innerHTML='<span class="spin"></span>'; }
   setLive(id, transcript || "녹음을 보내는 중…");
+
   try {
     const body = { token:S.token, sentence_id:id, passage_id:S.passage.id, mode:S.mode,
                    input_mode: typed ? "typed" : "voice" };
     if (transcript) body.transcript = transcript; else body.audio = audio;
     const r = await fn("tr-grade", body);
+    if (c.aborted) return;
+    cur = null;
     S.results[id] = r;
     S.retry[id] = false;
+    delete S.draft[id];
     const hs = (S.hist[id] = S.hist[id] || []);
     hs.push({ n: r.try_no || hs.length+1, score: r.score, verdict: r.verdict });
     S.open[id] = r.verdict !== "pass";
-    const lv=liveEl(id); if(lv) lv.classList.add("hide");
-    resetMic(id); redraw(id);
-    const done=Object.keys(S.results).length, tot=S.sentences.length;
-    $("#progbar").style.width = done/tot*100+"%";
-    $("#progtx").textContent = done+"/"+tot;
-    if (S.passage) { S.tried[S.passage.id] = (S.tried[S.passage.id]||0)+1; if (S.qlist.length) { const v=$("#qsel").value; renderQsel(); $("#qsel").value=v; } }
+    resetMic(id); redraw(id); refreshFoot();
+    if (S.passage) { S.tried[S.passage.id] = (S.tried[S.passage.id]||0)+1;
+      if (S.qlist.length) { const v=$("#qsel").value; renderQsel(); $("#qsel").value=v; } }
   } catch(e){
+    if (c.aborted) return;
+    cur = null;
     resetMic(id);
     if (e.status === 401) { alert("로그인이 만료됐어요. 다시 로그인해 주세요."); S.token=null; save("token",null); resetLogin(); go("login"); return; }
-    if (e.data && e.data.unclear) {   // 점수를 남기지 않고 다시 묻는다
+    if (e.data && e.data.unclear) {   // 알아듣지 못한 경우 — 점수를 남기지 않는다
       setLive(id, e.message, "empty");
-      const lv = liveEl(id); if (lv) lv.classList.remove("hide");
       return;
     }
     setLive(id,"채점에 실패했어요: "+e.message,"empty");
   }
 }
-
 /* ================= 기록 ================= */
 const KIND = { structure:"구문 구조", vocab:"어휘 뜻", omission:"빠뜨림", addition:"없는 말 추가",
                grammar:"문법·형태", nuance:"뉘앙스", vague:"얼버무림", other:"기타" };
@@ -1617,7 +1710,7 @@ async function loadRoster(){
       enterApp();
     }).catch(() => { S.token=null; save("token",null); go("login"); });
   } else go("login");
-  document.addEventListener("visibilitychange", () => { if(document.hidden) stopRec(); });
+  document.addEventListener("visibilitychange", () => { if(document.hidden) abortRec("녹음이 중단됐어요. 다시 눌러주세요."); });
   // 빈 곳을 누르면 열려 있던 ⋯ 메뉴는 닫는다
   document.addEventListener("click", () => { $$("[data-menu]").forEach(x => x.classList.add("hide")); });
 })();
