@@ -1189,6 +1189,19 @@ let sess = 0;               // 세션 일련번호
 let cur = null;             // 지금 '녹음 중'인 세션 — 마이크는 한 번에 하나만
 const grading = new Map();  // 채점 중인 세션들 — 문장마다 따로, 동시에 여러 개 가능
 
+/* 한꺼번에 너무 많이 보내면 AI 쪽에서 요청이 몰렸다고 막는다.
+   두 개까지만 보내고 나머지는 줄을 세운다. 학생은 계속 녹음할 수 있다. */
+const MAX_PARALLEL = 2;
+let running = 0; const waiting = [];
+function takeSlot(){
+  if (running < MAX_PARALLEL) { running++; return Promise.resolve(); }
+  return new Promise(r => waiting.push(r));
+}
+function freeSlot(){
+  const next = waiting.shift();
+  if (next) next(); else running = Math.max(0, running - 1);
+}
+
 const micEl = id => document.querySelector('[data-mic="'+id+'"]');
 const liveEl = id => document.querySelector('[data-live="'+id+'"]');
 /** 이 문장이 녹음 중이거나 채점 중인가 — redraw 가 화면을 갈아엎지 않도록 막는 데 쓴다 */
@@ -1332,10 +1345,30 @@ async function finish(c, transcript, audio, typed){
   setLive(id, transcript || "녹음을 보내는 중…");
 
   try {
+    if (running >= MAX_PARALLEL) setLive(id, "순서를 기다리는 중이에요… 계속 진행하셔도 돼요", "empty");
+    await takeSlot();
+    c.slot = true;
+    if (c.aborted) { freeSlot(); c.slot=false; release(); return; }
+    setLive(id, "채점하는 중이에요…", "empty");
+
     const body = { token:S.token, sentence_id:id, passage_id:S.passage.id, mode:S.mode,
                    input_mode: typed ? "typed" : "voice" };
     if (transcript) body.transcript = transcript; else body.audio = audio;
-    const r = await fn("tr-grade", body);
+
+    /* 요청이 몰리면(429) 서버가 재시도 가능이라고 알려준다. 학생이 다시 누르지 않아도 되게
+       조용히 두 번까지 더 시도한다. */
+    let r = null, lastErr = null;
+    for (let k = 0; k < 3; k++) {
+      try { r = await fn("tr-grade", body); lastErr = null; break; }
+      catch(err){
+        lastErr = err;
+        if (!(err.data && err.data.retryable) || c.aborted) break;
+        setLive(id, "채점이 밀리고 있어요. 다시 시도하는 중… ("+(k+2)+"/3)", "empty");
+        await new Promise(z => setTimeout(z, 2500 * (k+1)));
+      }
+    }
+    freeSlot(); c.slot = false;
+    if (lastErr) throw lastErr;
     release();
     // 그 사이 다른 지문으로 넘어갔으면 화면은 건드리지 않는다 (기록은 이미 저장됨)
     if (c.aborted || !S.passage || S.passage.id !== c.pid || S.mode !== c.mode) return;
@@ -1349,6 +1382,7 @@ async function finish(c, transcript, audio, typed){
     if (S.passage) { S.tried[S.passage.id] = (S.tried[S.passage.id]||0)+1;
       if (S.qlist.length) { const v=$("#qsel").value; renderQsel(); $("#qsel").value=v; } }
   } catch(e){
+    if (c.slot) { freeSlot(); c.slot = false; }
     release();
     if (c.aborted || !S.passage || S.passage.id !== c.pid || S.mode !== c.mode) return;
     resetMic(id);
@@ -1357,7 +1391,8 @@ async function finish(c, transcript, audio, typed){
       setLive(id, e.message, "empty");
       return;
     }
-    setLive(id,"채점에 실패했어요: "+e.message,"empty");
+    const m = String(e.message || "");
+    setLive(id, m.length > 90 ? "채점이 잠시 안 됐어요. 마이크를 다시 눌러 주세요." : m, "empty");
   }
 }
 /* ================= 기록 ================= */
