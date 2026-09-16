@@ -846,7 +846,7 @@ $("#doText").onclick = async () => {
   const btn = $("#doText");
   btn.innerHTML = '<span class="spin"></span> 나누는 중…'; btn.disabled = true;
   try {
-    const j = await fn("tr-ingest", { text:t, title:$("#ptitle").value.trim(), created_by:S.me?S.me.name:null });
+    const j = await fn("tr-ingest", { token:S.token, text:t, title:$("#ptitle").value.trim(), created_by:S.me?S.me.name:null });
     $("#ptext").value=""; $("#ptitle").value="";
     S.exam = null; S.qlist = [];
     await loadLists();
@@ -936,7 +936,7 @@ async function openPassage(id){
   if ($("#qsel").value !== id && S.qlist.length) $("#qsel").value = id;
 
   try {
-    const j = await fn("tr-ingest", { passage_id:id });
+    const j = await fn("tr-ingest", { token:S.token, passage_id:id });
     S.passage = j.passage; S.sentences = j.sentences;
     if (meta) { meta.status = "ready"; meta.sentence_count = j.sentences.length; renderQsel(); $("#qsel").value = id; }
   } catch(e){ $("#slist").innerHTML = '<div class="err">'+esc(e.message)+'</div>'; return; }
