@@ -1185,13 +1185,14 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
             (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 let useFallback = (!SR || IOS);
-let sess = 0;      // 세션 일련번호
-let cur = null;    // 지금 녹음 중이거나 채점 중인 세션
+let sess = 0;               // 세션 일련번호
+let cur = null;             // 지금 '녹음 중'인 세션 — 마이크는 한 번에 하나만
+const grading = new Map();  // 채점 중인 세션들 — 문장마다 따로, 동시에 여러 개 가능
 
 const micEl = id => document.querySelector('[data-mic="'+id+'"]');
 const liveEl = id => document.querySelector('[data-live="'+id+'"]');
-/** 이 문장이 지금 녹음/채점 중인가 — redraw 가 화면을 갈아엎지 않도록 막는 데 쓴다 */
-const isBusy = id => !!(cur && cur.id === id);
+/** 이 문장이 녹음 중이거나 채점 중인가 — redraw 가 화면을 갈아엎지 않도록 막는 데 쓴다 */
+const isBusy = id => !!(cur && cur.id === id) || grading.has(id);
 
 function setLive(id,text,cls){
   const el = liveEl(id); if(!el) return;
@@ -1204,9 +1205,9 @@ function resetMic(id){
   const card=document.querySelector('[data-id="'+id+'"]'); if(card) card.classList.remove("act");
 }
 
-/** 세션을 즉시 죽인다. 채점은 하지 않는다. */
+/** 녹음 세션을 즉시 죽인다. 이미 채점에 들어간 건 여기 오지 않는다. */
 function killSession(c, msg){
-  if (!c || c.aborted) return;
+  if (!c || c.aborted || c.grading) return;
   c.aborted = true;
   try { if (c.rec) { c.rec.onend=null; c.rec.onresult=null; c.rec.onerror=null;
                      if (c.rec.abort) c.rec.abort(); else c.rec.stop(); } } catch(e){}
@@ -1221,11 +1222,12 @@ function killSession(c, msg){
 function abortRec(msg){ killSession(cur, msg); }
 
 function toggleMic(id){
-  if (cur && cur.id === id) {
-    if (cur.grading) return;                     // 채점 중에는 아무 반응도 하지 않는다
-    stopRec(); return;
-  }
-  if (cur) abortRec("녹음을 취소했어요.");        // 다른 문장으로 옮겨가면 앞 녹음은 버린다
+  if (grading.has(id)) return;                   // 이 문장은 채점 중 — 결과를 기다린다
+  if (cur && cur.id === id) { stopRec(); return; }
+  /* 앞 문장이 '녹음 중'이면 그것만 취소한다.
+     앞 문장이 '채점 중'이면 그대로 두고 바로 다음 문장을 녹음한다.
+     채점은 문장마다 따로 돌기 때문에 기다릴 필요가 없다. */
+  if (cur) abortRec("녹음을 취소했어요.");
   startRec(id);
 }
 
@@ -1233,6 +1235,7 @@ function toggleMic(id){
 function stopRec(){
   const c = cur;
   if (!c || c.aborted || c.grading) return;
+  setLive(c.id, "채점하는 중이에요… 다른 문장 먼저 하셔도 돼요", "empty");
   c.userStopped = true;
   if (c.rec) { try{ c.rec.stop(); }catch(e){ finish(c, c.finalTx.trim()); } }
   else if (c.mr && c.mr.state === "recording") { try{ c.mr.stop(); }catch(e){ finish(c, ""); } }
@@ -1240,7 +1243,8 @@ function stopRec(){
 }
 
 async function startRec(id){
-  const c = { n: ++sess, id, rec:null, mr:null, stream:null, chunks:[],
+  const c = { n: ++sess, id, pid: S.passage ? S.passage.id : null, mode: S.mode,
+              rec:null, mr:null, stream:null, chunks:[],
               finalTx:"", userStopped:false, restarts:0, aborted:false, grading:false };
   cur = c; S.recording = true;
   const m=micEl(id); if(m){ m.classList.remove("busy"); m.classList.add("rec"); m.textContent="■"; }
@@ -1303,23 +1307,26 @@ async function startRec(id){
 
 /** 타이핑 제출도 같은 파이프라인을 타되, 녹음 없는 세션을 하나 만든다 */
 function typedSession(id){
-  if (cur) abortRec();
-  const c = { n: ++sess, id, rec:null, mr:null, stream:null, chunks:[],
+  if (cur && cur.id === id) abortRec();
+  const c = { n: ++sess, id, pid: S.passage ? S.passage.id : null, mode: S.mode,
+              rec:null, mr:null, stream:null, chunks:[],
               finalTx:"", userStopped:true, restarts:0, aborted:false, grading:false };
-  cur = c; return c;
+  return c;
 }
 
 async function finish(c, transcript, audio, typed){
   if (!c || c.aborted) return;
   const id = c.id;
-  c.grading = true; S.recording = false;
+  if (cur === c) { cur = null; S.recording = false; }   // 마이크 자리를 즉시 비운다
 
   if (!transcript && !audio) {
-    cur = null; c.aborted = true;
+    c.aborted = true;
     resetMic(id);
     setLive(id, "아무 말도 들리지 않았어요. 다시 눌러주세요.", "empty");
     return;
   }
+  c.grading = true; grading.set(id, c);
+  const release = () => { if (grading.get(id) === c) grading.delete(id); };
   const m=micEl(id);
   if(m){ m.classList.remove("rec"); m.classList.add("busy"); m.innerHTML='<span class="spin"></span>'; }
   setLive(id, transcript || "녹음을 보내는 중…");
@@ -1329,8 +1336,9 @@ async function finish(c, transcript, audio, typed){
                    input_mode: typed ? "typed" : "voice" };
     if (transcript) body.transcript = transcript; else body.audio = audio;
     const r = await fn("tr-grade", body);
-    if (c.aborted) return;
-    cur = null;
+    release();
+    // 그 사이 다른 지문으로 넘어갔으면 화면은 건드리지 않는다 (기록은 이미 저장됨)
+    if (c.aborted || !S.passage || S.passage.id !== c.pid || S.mode !== c.mode) return;
     S.results[id] = r;
     S.retry[id] = false;
     delete S.draft[id];
@@ -1341,8 +1349,8 @@ async function finish(c, transcript, audio, typed){
     if (S.passage) { S.tried[S.passage.id] = (S.tried[S.passage.id]||0)+1;
       if (S.qlist.length) { const v=$("#qsel").value; renderQsel(); $("#qsel").value=v; } }
   } catch(e){
-    if (c.aborted) return;
-    cur = null;
+    release();
+    if (c.aborted || !S.passage || S.passage.id !== c.pid || S.mode !== c.mode) return;
     resetMic(id);
     if (e.status === 401) { alert("로그인이 만료됐어요. 다시 로그인해 주세요."); S.token=null; save("token",null); resetLogin(); go("login"); return; }
     if (e.data && e.data.unclear) {   // 알아듣지 못한 경우 — 점수를 남기지 않는다
