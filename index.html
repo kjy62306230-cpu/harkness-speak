@@ -161,6 +161,8 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
 .keyb{width:46px;height:30px;border-radius:9px;flex:none;display:grid;place-items:center;
   background:var(--line2);color:var(--tx3);font-size:14px;align-self:flex-start;margin-top:6px}
 .keyb:active{background:var(--line)}
+.keyb.cancel{background:var(--bad-w);color:var(--bad);font-weight:800;font-size:15px;
+  border:1px solid var(--bad)}
 .inputcol{display:flex;flex-direction:column;align-items:center;flex:none;align-self:flex-start}
 .typebox{margin:0 14px 14px}
 .typebox textarea{width:100%;min-height:74px;padding:11px 12px;border-radius:12px;border:1px solid var(--pri);
@@ -179,7 +181,7 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
   border:1px solid var(--mid-b);color:var(--mid);font-size:12.5px;line-height:1.55;font-weight:600}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(225,29,72,.42)}50%{box-shadow:0 0 0 11px rgba(225,29,72,0)}}
 
-.live{margin:0 14px 14px;padding:12px 13px;border-radius:12px;background:var(--pri-w);
+.live{margin:0 14px 14px;padding:12px 13px;border-radius:12px;background:var(--pri-w);white-space:pre-line;
   border:1px dashed var(--pri);font-size:14.5px;line-height:1.65;min-height:46px}
 .live.empty{color:var(--tx3);font-style:italic}
 
@@ -1131,8 +1133,12 @@ function bindSent(){
   $$("[data-keyb]").forEach(b => b.onclick = e => {
     e.stopPropagation();
     const id = b.dataset.keyb;
-    if (cur && cur.grading) return;                       // 채점 중에는 못 바꾼다
-    if (cur) abortRec();                                  // 녹음 중이면 그 음성은 버린다
+    if (b.dataset.act === "cancel") {                     // 녹음 중 → ✕ 취소
+      abortRec("녹음을 취소했어요. 다시 🎙 를 눌러주세요.");
+      return;
+    }
+    if (grading.has(id)) return;                          // 채점 중에는 못 바꾼다
+    if (cur) abortRec();                                  // 다른 문장 녹음 중이면 그 음성은 버린다
     S.typing[id] = !S.typing[id];
     redraw(id);
     const ta = document.querySelector('[data-ta="'+id+'"]');
@@ -1216,6 +1222,16 @@ function setLive(id,text,cls){
 function resetMic(id){
   const m=micEl(id); if(m){ m.classList.remove("rec","busy"); m.textContent="🎙"; }
   const card=document.querySelector('[data-id="'+id+'"]'); if(card) card.classList.remove("act");
+  setCancelBtn(id, false);
+}
+
+/** 녹음 중에는 마이크 아래 ⌨ 버튼이 '✕ 취소' 가 된다.
+    잘못 말했을 때 채점으로 넘기지 않고 그냥 버릴 수 있게. */
+function setCancelBtn(id, on){
+  const b = document.querySelector('[data-keyb="'+id+'"]');
+  if (!b) return;
+  if (on) { b.classList.add("cancel"); b.textContent = "✕"; b.dataset.act = "cancel"; b.title = "녹음 취소"; }
+  else    { b.classList.remove("cancel"); b.textContent = "⌨"; b.dataset.act = ""; b.title = "타이핑으로 입력"; }
 }
 
 /** 녹음 세션을 즉시 죽인다. 이미 채점에 들어간 건 여기 오지 않는다. */
@@ -1262,8 +1278,9 @@ async function startRec(id){
   cur = c; S.recording = true;
   const m=micEl(id); if(m){ m.classList.remove("busy"); m.classList.add("rec"); m.textContent="■"; }
   const card=document.querySelector('[data-id="'+id+'"]'); if(card) card.classList.add("act");
+  setCancelBtn(id, true);
   const what = S.mode==="en2ko" ? "한국어로 해석해 보세요" : "영어로 말해 보세요";
-  setLive(id, useFallback ? "녹음 중 — "+what+". 다 말했으면 ■ 를 누르세요" : "듣고 있어요 — "+what, "empty");
+  setLive(id, what + "\n다 말했으면 ■ · 잘못 말했으면 ✕", "empty");
 
   if (!useFallback) {
     try {
