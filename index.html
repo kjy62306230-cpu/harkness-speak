@@ -587,14 +587,14 @@ $("#toAdminPanel").onclick = () => { go("admin"); loadAdmin(); };
 async function loadLists(){
   $("#elist").innerHTML = '<span class="muted">불러오는 중…</span>';
   try {
-    S.exams = await rest("tr_exams?select=*&order=created_at.desc&limit=30");
-    S.solos = await rest("tr_passages?exam_id=is.null&select=*&order=created_at.desc&limit=30");
+    var home = await fn("tr-list", { token:S.token, action:"home" });
+    S.exams = home.exams; S.solos = home.solos; S.homeNos = home.nos;
   } catch(e){ $("#elist").innerHTML = '<span class="muted">목록을 불러오지 못했어요.</span>'; return; }
 
   // 시험지마다 몇 번부터 몇 번까지 들어 있는지 미리 계산해서 보여준다
   let ranges = {};
   try {
-    const nos = await rest("tr_passages?exam_id=not.is.null&select=exam_id,no,status");
+    const nos = S.homeNos || [];
     nos.forEach(p => {
       const r = ranges[p.exam_id] = ranges[p.exam_id] || { min:null, max:null, ready:0, n:0 };
       r.n++;
@@ -664,8 +664,7 @@ function canEditExam(x){
 /* 자료 안의 지문·모범해석·직역을 텍스트 파일로 내려받는다 (원본 PDF 는 저장하지 않으므로) */
 async function downloadExam(examId, title){
   try {
-    const ps = await rest("tr_passages?exam_id=eq."+examId+
-      "&select=title,no,status,body,tr_sentences(idx,en,ko_ref,ko_literal)&order=no.asc");
+    const ps = (await fn("tr-list", { token:S.token, action:"items", exam_id:examId, with_sentences:true })).items;
     let out = title + "\n" + "=".repeat(Math.max(title.length, 20)) + "\n" +
       "하크니스 해석 트레이너 · " + new Date().toLocaleDateString("ko-KR") + "\n\n";
     ps.forEach(p => {
@@ -866,7 +865,7 @@ async function openExam(examId){
   $("#ilist").innerHTML = '<div class="card" style="padding:22px;text-align:center"><span class="spin"></span></div>';
   go("items");
   try {
-    S.qlist = await rest("tr_passages?exam_id=eq."+examId+"&select=id,no,title,kind,status,sentence_count&order=no.asc");
+    S.qlist = (await fn("tr-list", { token:S.token, action:"items", exam_id:examId })).items;
     await loadTried();
   } catch(e){ $("#ilist").innerHTML = '<div class="err">문항을 불러오지 못했어요.</div>'; return; }
   renderItems();
