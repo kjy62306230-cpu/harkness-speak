@@ -173,7 +173,15 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
 .typebox .row .no{border:1px solid var(--line);color:var(--tx2)}
 .fillnote{margin:-4px 14px 10px;padding:7px 10px;border-radius:9px;background:var(--mid-w);border:1px solid var(--mid-b);color:var(--mid);font-size:11.5px;font-weight:700;line-height:1.5}
 .more{margin-left:auto;font-size:11.5px;font-weight:800;color:var(--pri);white-space:nowrap}
-.hist{display:flex;gap:5px;flex-wrap:wrap;margin:0 14px 10px}
+.hist{display:flex;gap:5px;flex-wrap:wrap;margin:0 14px 10px;align-items:center;cursor:pointer}
+.hist .lbl{font-size:11px;font-weight:700;color:var(--tx3);margin-left:2px}
+.htry{margin:0 14px 12px;padding:10px 12px;border-radius:11px;background:var(--card2,var(--line2));border:1px solid var(--line)}
+.htry .row{display:flex;gap:8px;align-items:baseline;padding:6px 0;border-top:1px solid var(--line2)}
+.htry .row:first-child{border-top:none}
+.htry .n{font-size:11px;font-weight:800;color:var(--tx3);flex:none;width:34px}
+.htry .sc{font-size:12px;font-weight:800;flex:none;width:34px}
+.htry .tx{flex:1;min-width:0;font-size:12.5px;line-height:1.55;color:var(--tx2);word-break:break-word}
+.htry .ag{margin-top:9px;width:100%;padding:9px;border-radius:9px;border:1px solid var(--pri);color:var(--pri);font-size:12.5px;font-weight:800;background:none}
 .hb{font-size:11px;font-weight:800;padding:3px 8px;border-radius:7px;background:var(--line2);color:var(--tx3)}
 .hb.pass{background:var(--ok-w);color:var(--ok)}
 .hb.partial{background:var(--mid-w);color:var(--mid)}
@@ -430,6 +438,7 @@ const S = {
   hist:{},             // sentence_id -> [{n,score,verdict}]  1차→2차 점수
   typing:{}, retry:{}, // sentence_id -> 타이핑 입력창 열림 / 정답 덮고 재도전 중
   draft:{},            // sentence_id -> 타이핑 중이던 글 (redraw 돼도 안 지워지게)
+  htry:{}, htryOpen:{},// sentence_id -> 지난 시도 전체 기록 / 펼침 여부
   adminData:null, adminTab:"students",
   nav:{ level:"list", rows:[] },
 };
@@ -466,7 +475,7 @@ function doLogout(){
   if (!confirm("로그아웃 할까요?")) return;
   fn("tr-auth", { action:"logout", token:S.token }).catch(()=>{});
   S.token=null; S.me=null; S.admin=false; save("token",null);
-  S.exam=null; S.qlist=[]; S.passage=null; S.sentences=[]; S.results={}; S.hist={}; S.typing={}; S.retry={}; S.draft={};
+  S.exam=null; S.qlist=[]; S.passage=null; S.sentences=[]; S.results={}; S.hist={}; S.typing={}; S.retry={}; S.draft={}; S.htry={}; S.htryOpen={};
   resetLogin(); go("login");
 }
 $("#logout").onclick = doLogout;
@@ -930,7 +939,7 @@ function renderQsel(){
 $("#qsel").onchange = (e) => { abortRec(); openPassage(e.target.value); };
 
 async function openPassage(id){
-  S.results={}; S.open={}; S.filter="all"; S.hist={}; S.typing={}; S.retry={}; S.draft={};
+  S.results={}; S.open={}; S.filter="all"; S.hist={}; S.typing={}; S.retry={}; S.draft={}; S.htry={}; S.htryOpen={};
   const meta = S.qlist.find(q=>q.id===id);
   $("#qselBox").classList.toggle("hide", !S.qlist.length);
   $("#slist").innerHTML = '<div class="card" style="padding:22px;text-align:center"><span class="spin"></span>'+
@@ -952,7 +961,8 @@ async function openPassage(id){
     (h.rows||[]).forEach(a => {
       if (a.mode !== S.mode) return;
       (hh[a.sentence_id] = hh[a.sentence_id] || []).push(
-        { n:a.try_no||0, score:a.score, verdict:a.verdict, at:a.created_at });
+        { n:a.try_no||0, score:a.score, verdict:a.verdict, at:a.created_at,
+          transcript:a.transcript, input_mode:a.input_mode });
       if (seen[a.sentence_id]) return;
       seen[a.sentence_id] = 1;
       S.results[a.sentence_id] = Object.assign({ transcript:a.transcript, score:a.score, verdict:a.verdict }, a.feedback||{});
@@ -968,7 +978,7 @@ async function openPassage(id){
 
 function startPassage(passage, sentences){
   S.passage = passage; S.sentences = sentences;
-  S.results={}; S.open={}; S.filter="all"; S.qlist=[]; S.hist={}; S.typing={}; S.retry={}; S.draft={};
+  S.results={}; S.open={}; S.filter="all"; S.qlist=[]; S.hist={}; S.typing={}; S.retry={}; S.draft={}; S.htry={}; S.htryOpen={};
   $("#qselBox").classList.add("hide");
   renderStudy(); go("study");
 }
@@ -978,7 +988,7 @@ $$(".seg button").forEach(b => b.onclick = () => {
   abortRec();
   $$(".seg button").forEach(x=>x.classList.remove("on"));
   b.classList.add("on"); S.mode=b.dataset.mode; S.results={}; S.open={}; S.filter="all";
-  S.hist={}; S.typing={}; S.retry={}; S.draft={};
+  S.hist={}; S.typing={}; S.retry={}; S.draft={}; S.htry={}; S.htryOpen={};
   save("mode", S.mode);
   if (S.passage) openPassage(S.passage.id);
 });
@@ -1043,7 +1053,11 @@ function sentHtml(s,i){
       '</div></div>'+
     (s.filled ? '<div class="fillnote">✎ 빈칸을 채워 완성한 문장이에요'+
       (s.filled_part ? ' — <b>'+esc(s.filled_part)+'</b>' : '')+'</div>' : '')+
-    (hs.length > 1 ? histHtml(hs) : "")+
+    (hs.length ? '<div class="hist" data-htry="'+s.id+'">'+
+        hs.map(h => '<span class="hb '+(h.verdict||"")+'">'+h.n+'차 '+h.score+'</span>').join(
+          '<span class="hb" style="background:none;color:var(--tx3);padding:3px 0">\u2192</span>')+
+        '<span class="lbl">'+(S.htryOpen[s.id]?"닫기":"지난 기록 "+hs.length+"회")+'</span></div>' : "")+
+    (S.htryOpen[s.id] ? htryHtml(s.id, hs) : "")+
     (S.retry[s.id] ? '<div class="retryhint">모범 해석은 잠깐 덮어뒀어요. 영어 문장만 보고 다시 해석해 보세요 — 이번 점수도 따로 남습니다.</div>' : "")+
     (S.typing[s.id] ? typeHtml(s.id) : "")+
     '<div class="live hide" data-live="'+s.id+'"></div>'+
@@ -1055,6 +1069,19 @@ function histHtml(hs){
   return '<div class="hist">'+
     hs.map(h => '<span class="hb '+(h.verdict||"")+'">'+h.n+'차 '+h.score+'</span>').join(arrow)+
     '</div>';
+}
+
+/** 지난 시도 전체 — 몇 차, 몇 점, 그때 뭐라고 말했는지. 모범 해석은 안 보여준다. */
+function htryHtml(id, hs){
+  const list = hs.slice().sort((a,b)=>(a.n||0)-(b.n||0));
+  return '<div class="htry">'+
+    list.map(h => '<div class="row">'+
+      '<span class="n">'+h.n+'차</span>'+
+      '<span class="sc '+(h.verdict==="pass"?"":"")+'" style="color:'+
+        (h.verdict==="pass"?"var(--ok)":h.verdict==="fail"?"var(--bad)":"var(--mid)")+'">'+h.score+'</span>'+
+      '<span class="tx">'+esc(h.transcript||"(내용 없음)")+
+        (h.input_mode==="typed"?' <span style="opacity:.6">\u2328</span>':'')+'</span></div>').join("")+
+    '<button class="ag" data-hretry="'+id+'">이 문장 다시 해석하기</button></div>';
 }
 
 function typeHtml(id){
@@ -1150,6 +1177,21 @@ function bindSent(){
   });
   /* 쓰던 글은 상태에 계속 담아둔다 — redraw 가 돌아도 안 지워지게 */
   $$("[data-ta]").forEach(t => t.oninput = () => { S.draft[t.dataset.ta] = t.value; });
+  $$("[data-htry]").forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const id = b.dataset.htry;
+    S.htryOpen[id] = !S.htryOpen[id];
+    redraw(id);
+  });
+  $$("[data-hretry]").forEach(b => b.onclick = () => {
+    const id = b.dataset.hretry;
+    delete S.results[id]; delete S.open[id];
+    S.retry[id] = true; S.typing[id] = false; S.htryOpen[id] = false;
+    redraw(id);
+    const card = document.querySelector('[data-id="'+id+'"]');
+    if (card) card.scrollIntoView({behavior:"smooth",block:"center"});
+    setTimeout(()=>toggleMic(id),260);
+  });
   $$("[data-typeno]").forEach(b => b.onclick = () => {
     const id = b.dataset.typeno; S.typing[id] = false; delete S.draft[id]; redraw(id);
   });
@@ -1180,7 +1222,7 @@ function bindSent(){
   $$("[data-reset]").forEach(b => b.onclick = () => {
     abortRec();
     if (!confirm("이 화면의 채점 결과를 지우고 처음부터 다시 풀까요?\n(지난 기록은 '내 기록'에 그대로 남아요)")) return;
-    S.results={}; S.open={}; S.filter="all"; S.hist={}; S.typing={}; S.retry={}; S.draft={};
+    S.results={}; S.open={}; S.filter="all"; S.hist={}; S.typing={}; S.retry={}; S.draft={}; S.htry={}; S.htryOpen={};
     renderStudy(); window.scrollTo(0,0);
   });
   $$("[data-nextq]").forEach(b => b.onclick = () => { abortRec(); openPassage(b.dataset.nextq); });
@@ -1416,7 +1458,8 @@ async function finish(c, transcript, audio, typed){
     S.retry[id] = false;
     delete S.draft[id];
     const hs = (S.hist[id] = S.hist[id] || []);
-    hs.push({ n: r.try_no || hs.length+1, score: r.score, verdict: r.verdict });
+    hs.push({ n: r.try_no || hs.length+1, score: r.score, verdict: r.verdict,
+              transcript: r.transcript, input_mode: typed ? "typed" : "voice" });
     S.open[id] = false;   // 자동으로 펼치지 않는다 - 보던 화면이 밀리지 않게
     const anch = document.querySelector('[data-id="'+id+'"]');
     const above = anch ? anch.getBoundingClientRect().top < 0 : false;
