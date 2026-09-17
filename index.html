@@ -1256,7 +1256,7 @@ function bindSent(){
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
             (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-let useFallback = (!SR || IOS);
+let useFallback = !SR;   // iOS 도 일단 실시간 자막을 시도한다 (실패하면 자동으로 녹음 방식)
 let sess = 0;               // 세션 일련번호
 let cur = null;             // 지금 '녹음 중'인 세션 — 마이크는 한 번에 하나만
 const grading = new Map();  // 채점 중인 세션들 — 문장마다 따로, 동시에 여러 개 가능
@@ -1369,7 +1369,9 @@ async function startRec(id){
     try {
       const rec = new SR(); c.rec = rec;
       rec.lang = S.mode==="en2ko" ? "ko-KR" : "en-US";
-      rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
+      // iOS 는 continuous 가 불안정해서 중간에 끊긴다. onend 에서 이어 붙인다.
+      rec.continuous = !IOS; rec.interimResults = true; rec.maxAlternatives = 1;
+      c.heard = false;
       rec.onresult = e => {
         if (c.aborted || cur !== c) return;
         let itm="";
@@ -1377,6 +1379,7 @@ async function startRec(id){
           const t=e.results[i][0].transcript;
           if (e.results[i].isFinal) c.finalTx+=t; else itm+=t;
         }
+        c.heard = true; c.restarts = 0;
         setLive(id,(c.finalTx+itm).trim()||"…");
       };
       rec.onerror = e => {
@@ -1385,17 +1388,33 @@ async function startRec(id){
           killSession(c, "마이크 권한이 필요해요. 주소창의 자물쇠 → 마이크 허용을 눌러주세요."); return;
         }
         if (e.error==="no-speech") return;
+        // 이 기기에서 실시간 자막이 안 되는 경우 - 조용히 녹음 방식으로 갈아탄다
         useFallback = true;
+        if (!c.heard && !c.userStopped) {
+          try { rec.onend=null; rec.onresult=null; rec.abort(); } catch(x){}
+          c.rec = null;
+          recordAudio(c);
+        }
       };
       rec.onend = () => {
         if (c.aborted || cur !== c) return;
-        if (c.userStopped || c.finalTx.trim()) { finish(c, c.finalTx.trim()); return; }
-        if (c.restarts++ < 3) { try{ rec.start(); }catch(err){ finish(c,""); } } else finish(c,"");
+        if (c.userStopped) { finish(c, c.finalTx.trim()); return; }
+        // 학생이 ■ 를 누르기 전에는 계속 듣는다. iOS 는 한 마디마다 끊겨서 이어 붙여야 한다.
+        if (c.restarts++ < 12) { try{ rec.start(); }catch(err){ finish(c, c.finalTx.trim()); } }
+        else finish(c, c.finalTx.trim());
       };
       rec.start(); return;
-    } catch(err){ useFallback = true; }
+    } catch(err){ useFallback = true; c.rec = null; }
   }
 
+  await recordAudio(c);
+}
+
+/** 실시간 자막이 안 되는 기기용 - 녹음해서 서버에서 받아적는다 */
+async function recordAudio(c){
+  const id = c.id;
+  if (c.aborted) return;
+  setLive(id, "녹음 중 — 다 말했으면 ■ 를 누르세요\n(이 기기는 말하는 중 자막이 안 떠요)", "empty");
   try {
     const stream = await navigator.mediaDevices.getUserMedia({audio:true});
     if (c.aborted || cur !== c) { stream.getTracks().forEach(t=>t.stop()); return; }
