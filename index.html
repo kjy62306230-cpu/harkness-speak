@@ -179,6 +179,9 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
 .htry .row{display:flex;gap:8px;align-items:baseline;padding:6px 0;border-top:1px solid var(--line2)}
 .htry .row:first-child{border-top:none}
 .htry .n{font-size:11px;font-weight:800;color:var(--tx3);flex:none;width:34px}
+.htry .dt{font-size:10.5px;color:var(--tx3);flex:none;width:78px;font-weight:600}
+.htry .row{align-items:flex-start}
+.htry .tx{padding-top:1px}
 .htry .sc{font-size:12px;font-weight:800;flex:none;width:34px}
 .htry .tx{flex:1;min-width:0;font-size:12.5px;line-height:1.55;color:var(--tx2);word-break:break-word}
 .htry .ag{margin-top:9px;width:100%;padding:9px;border-radius:9px;border:1px solid var(--pri);color:var(--pri);font-size:12.5px;font-weight:800;background:none}
@@ -1056,9 +1059,12 @@ function sentHtml(s,i){
     (hs.length ? '<div class="hist" data-htry="'+s.id+'">'+
         hs.map(h => '<span class="hb '+(h.verdict||"")+'">'+h.n+'차 '+h.score+'</span>').join(
           '<span class="hb" style="background:none;color:var(--tx3);padding:3px 0">\u2192</span>')+
-        '<span class="lbl">'+(S.htryOpen[s.id]?"닫기":"지난 기록 "+hs.length+"회")+'</span></div>' : "")+
+        '<span class="lbl">'+(S.htryOpen[s.id] ? "닫기"
+          : "지난 기록 "+hs.length+"회"+(hs[hs.length-1] && hs[hs.length-1].at ? " · "+fmtWhen(hs[hs.length-1].at) : ""))+
+        '</span></div>' : "")+
     (S.htryOpen[s.id] ? htryHtml(s.id, hs) : "")+
-    (S.retry[s.id] ? '<div class="retryhint">모범 해석은 잠깐 덮어뒀어요. 영어 문장만 보고 다시 해석해 보세요 — 이번 점수도 따로 남습니다.</div>' : "")+
+    (S.retry[s.id] ? '<div class="retryhint">다시 해석해 보세요 \u2014 이번 점수도 따로 남습니다.<br>'+
+      '<span style="font-weight:600;opacity:.85">지난 채점은 아래 \u2018자세히 보기\u2019 에 그대로 있어요. 먼저 말해보고 확인하면 더 좋아요.</span></div>' : "")+
     (S.typing[s.id] ? typeHtml(s.id) : "")+
     '<div class="live hide" data-live="'+s.id+'"></div>'+
     '<div data-res="'+s.id+'">'+(r ? barHtml(r,s) : "")+'</div></div>';
@@ -1072,11 +1078,22 @@ function histHtml(hs){
 }
 
 /** 지난 시도 전체 — 몇 차, 몇 점, 그때 뭐라고 말했는지. 모범 해석은 안 보여준다. */
+function fmtWhen(v){
+  if (!v) return "";
+  const d = new Date(v);
+  if (isNaN(d)) return "";
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const t = d.toLocaleTimeString("ko-KR", { hour:"numeric", minute:"2-digit" });
+  return sameDay ? "오늘 "+t : d.toLocaleDateString("ko-KR",{month:"numeric",day:"numeric"})+" "+t;
+}
+
 function htryHtml(id, hs){
   const list = hs.slice().sort((a,b)=>(a.n||0)-(b.n||0));
   return '<div class="htry">'+
     list.map(h => '<div class="row">'+
       '<span class="n">'+h.n+'차</span>'+
+      '<span class="dt">'+fmtWhen(h.at)+'</span>'+
       '<span class="sc '+(h.verdict==="pass"?"":"")+'" style="color:'+
         (h.verdict==="pass"?"var(--ok)":h.verdict==="fail"?"var(--bad)":"var(--mid)")+'">'+h.score+'</span>'+
       '<span class="tx">'+esc(h.transcript||"(내용 없음)")+
@@ -1154,8 +1171,11 @@ function bindSent(){
   });
   $$("[data-retry]").forEach(b => b.onclick = () => {
     const id = b.dataset.retry;
-    delete S.results[id]; delete S.open[id];
-    S.retry[id] = true; S.typing[id] = false;   // 모범 해석을 덮어야 '따라 읽기'가 안 된다
+    /* 이전 채점 결과는 지우지 않고 접어만 둔다.
+       눈앞에 답이 펼쳐져 있으면 따라 읽게 되지만,
+       복습하려고 직접 '자세히 보기'를 누르는 건 막지 않는다. */
+    S.open[id] = false;
+    S.retry[id] = true; S.typing[id] = false;
     redraw(id);
     const card = document.querySelector('[data-id="'+id+'"]');
     if (card) card.scrollIntoView({behavior:"smooth",block:"center"});
@@ -1185,7 +1205,7 @@ function bindSent(){
   });
   $$("[data-hretry]").forEach(b => b.onclick = () => {
     const id = b.dataset.hretry;
-    delete S.results[id]; delete S.open[id];
+    S.open[id] = false;
     S.retry[id] = true; S.typing[id] = false; S.htryOpen[id] = false;
     redraw(id);
     const card = document.querySelector('[data-id="'+id+'"]');
@@ -1459,7 +1479,8 @@ async function finish(c, transcript, audio, typed){
     delete S.draft[id];
     const hs = (S.hist[id] = S.hist[id] || []);
     hs.push({ n: r.try_no || hs.length+1, score: r.score, verdict: r.verdict,
-              transcript: r.transcript, input_mode: typed ? "typed" : "voice" });
+              transcript: r.transcript, input_mode: typed ? "typed" : "voice",
+              at: new Date().toISOString() });
     S.open[id] = false;   // 자동으로 펼치지 않는다 - 보던 화면이 밀리지 않게
     const anch = document.querySelector('[data-id="'+id+'"]');
     const above = anch ? anch.getBoundingClientRect().top < 0 : false;
