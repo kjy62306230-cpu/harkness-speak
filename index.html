@@ -190,6 +190,9 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
 .hb.partial{background:var(--mid-w);color:var(--mid)}
 .hb.fail{background:var(--bad-w);color:var(--bad)}
 .hb .ar{opacity:.5;margin:0 2px}
+.deduct{margin:10px 0 0;padding:10px 12px;border-radius:11px;background:var(--mid-w);
+  border:1px solid var(--mid-b);color:var(--mid);font-size:12.5px;line-height:1.6;font-weight:700}
+.deduct b{display:block;font-size:11px;opacity:.8;margin-bottom:3px;letter-spacing:.3px}
 .retryhint{margin:0 14px 12px;padding:10px 12px;border-radius:11px;background:var(--mid-w);
   border:1px solid var(--mid-b);color:var(--mid);font-size:12.5px;line-height:1.55;font-weight:600}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(225,29,72,.42)}50%{box-shadow:0 0 0 11px rgba(225,29,72,0)}}
@@ -1141,7 +1144,10 @@ function detailHtml(r,s){
         '<span class="jt"><b>의미 전달</b>'+esc(r.meaning_note||"")+'</span></div>'+
       '<div class="jrow '+(r.structure_ok?"y":"n")+'"><span class="ic">'+(r.structure_ok?"○":"✕")+'</span>'+
         '<span class="jt"><b>구조 파악</b>'+esc(r.structure_note||"")+'</span></div>'+
-    '</div>'+ errs +
+    '</div>'+
+    (r.score < 100 && r.why_not_full
+      ? '<div class="deduct"><b>100점이 아닌 이유 · '+(100-r.score)+'점</b>'+esc(r.why_not_full)+'</div>'
+      : '')+ errs +
     (r.good ? '<div class="gblk"><b>잘한 점 &nbsp;</b>'+esc(r.good)+'</div>' : '')+
     '<div class="ans"><b>'+(S.mode==="en2ko"?"모범 해석":"모범 영작")+'</b><div class="v">'+esc(r.model_answer)+'</div></div>'+
     (r.model_literal ? '<div class="ans lit"><b>구조 그대로 직역</b><div class="v">'+esc(r.model_literal)+'</div></div>' : '')+
