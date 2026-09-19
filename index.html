@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <meta name="theme-color" content="#4f46e5">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
+<!-- apple-mobile-web-app-capable 은 넣지 않는다.
+     넣으면 홈 화면 아이콘이 앱 모드로 열리는데, iOS 는 그 모드에서 마이크를 차단한다. -->
 <title>하크니스 해석 트레이너</title>
 <style>
 :root{
@@ -1901,6 +1901,16 @@ async function loadRoster(){
       enterApp();
     }).catch(() => { S.token=null; save("token",null); go("login"); });
   } else go("login");
+  /* 예전에 만든 홈 화면 아이콘은 여전히 앱 모드로 열린다 — 그때는 마이크가 막힌다 */
+  if (window.navigator.standalone === true) {
+    const w = document.createElement("div");
+    w.className = "err";
+    w.style.cssText = "margin:10px 14px;line-height:1.6";
+    w.innerHTML = "<b>홈 화면 아이콘으로 열면 마이크가 안 돼요.</b><br>"+
+      "아이폰 제약이에요. <b>사파리에서 직접 주소로 접속</b>해 주세요.<br>"+
+      "<span style='opacity:.85'>홈 화면 아이콘을 지우고 다시 추가하면 사파리로 열립니다.</span>";
+    document.body.prepend(w);
+  }
   document.addEventListener("visibilitychange", () => { if(document.hidden) abortRec("녹음이 중단됐어요. 다시 눌러주세요."); });
   // 빈 곳을 누르면 열려 있던 ⋯ 메뉴는 닫는다
   document.addEventListener("click", () => { $$("[data-menu]").forEach(x => x.classList.add("hide")); });
