@@ -1373,8 +1373,7 @@ function stopRec(){
 
   if (c.rec) {
     try { c.rec.stop(); } catch(e){}
-    try { if (c.rec.abort) setTimeout(()=>{ try{ if(!c.grading) c.rec.abort(); }catch(x){} }, 500); } catch(e){}
-    setTimeout(force, 900);
+    setTimeout(force, 1200);
   } else if (c.mr && c.mr.state === "recording") {
     try { c.mr.stop(); } catch(e){ finish(c, ""); return; }
     setTimeout(() => { if (!c.aborted && !c.grading && cur === c) finish(c, ""); }, 4000);
@@ -1420,7 +1419,7 @@ async function startRec(id){
         }
         /* 아이폰은 '확정' 신호가 안 오고 끝나는 일이 잦다.
            화면에 보이던 글자를 버리면 학생은 분명히 말했는데 안 들렸다고 나온다. */
-        c.interim = itm;
+        if (itm) c.interim = itm;
         c.heard = true; c.restarts = 0;
         setLive(id,(c.finalTx+itm).trim()||"…");
       };
@@ -1440,6 +1439,8 @@ async function startRec(id){
       };
       rec.onend = () => {
         if (c.aborted || cur !== c) return;
+        // 라운드가 끝나면 미확정 글자를 확정분에 넣어 둔다 (안 그러면 다음 라운드가 덮어쓴다)
+        if (c.interim) { c.finalTx = (c.finalTx + " " + c.interim).replace(/\s+/g," "); c.interim = ""; }
         if (c.userStopped) { finish(c, said(c)); return; }
         // 학생이 ■ 를 누르기 전에는 계속 듣는다. iOS 는 한 마디마다 끊겨서 이어 붙여야 한다.
         if (c.restarts++ < 12) { try{ rec.start(); }catch(err){ finish(c, said(c)); } }
