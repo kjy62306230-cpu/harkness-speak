@@ -1359,9 +1359,26 @@ function stopRec(){
   if (!c || c.aborted || c.grading) return;
   setLive(c.id, "채점하는 중이에요… 다른 문장 먼저 하셔도 돼요", "empty");
   c.userStopped = true;
-  if (c.rec) { try{ c.rec.stop(); }catch(e){ finish(c, c.finalTx.trim()); } }
-  else if (c.mr && c.mr.state === "recording") { try{ c.mr.stop(); }catch(e){ finish(c, ""); } }
-  else finish(c, c.finalTx ? c.finalTx.trim() : "");
+
+  /* ■ 를 눌렀는데 아무 일도 안 일어나던 문제.
+     아이폰은 인식기가 한 마디마다 끊겼다 다시 켜진다. 그 '꺼져 있는 찰나'에 ■ 를 누르면
+     rec.stop() 이 아무것도 하지 않고 onend 도 안 와서 채점이 영영 시작되지 않았다.
+     그래서 무슨 일이 있어도 채점으로 넘어가도록 보험을 건다. */
+  const force = () => {
+    if (c.aborted || c.grading || cur !== c) return;
+    finish(c, (c.finalTx || "").trim());
+  };
+
+  if (c.rec) {
+    try { c.rec.stop(); } catch(e){}
+    try { if (c.rec.abort) setTimeout(()=>{ try{ if(!c.grading) c.rec.abort(); }catch(x){} }, 500); } catch(e){}
+    setTimeout(force, 900);
+  } else if (c.mr && c.mr.state === "recording") {
+    try { c.mr.stop(); } catch(e){ finish(c, ""); return; }
+    setTimeout(() => { if (!c.aborted && !c.grading && cur === c) finish(c, ""); }, 4000);
+  } else {
+    force();
+  }
 }
 
 async function startRec(id){
