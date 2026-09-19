@@ -197,6 +197,10 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
 .live{margin:0 14px 14px;padding:12px 13px;border-radius:12px;background:var(--pri-w);white-space:pre-line;
   border:1px dashed var(--pri);font-size:14.5px;line-height:1.65;min-height:46px}
 .live.empty{color:var(--tx3);font-style:italic}
+.live.ready{background:var(--mid-w);border:1px dashed var(--mid);color:var(--mid);
+  font-style:normal;font-weight:800;text-align:center;font-size:15px}
+.live.go{background:var(--ok-w);border:1px dashed var(--ok);color:var(--ok);
+  font-style:normal;font-weight:800;text-align:center;font-size:15px}
 
 .bar{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:11px 14px;
   border-top:1px solid var(--line2);background:var(--card)}
@@ -1363,7 +1367,17 @@ async function startRec(id){
   const card=document.querySelector('[data-id="'+id+'"]'); if(card) card.classList.add("act");
   setCancelBtn(id, true);
   const what = S.mode==="en2ko" ? "한국어로 해석해 보세요" : "영어로 말해 보세요";
-  setLive(id, what + "\n다 말했으면 ■ · 잘못 말했으면 ✕", "empty");
+  /* 버튼 누르자마자 말하면 마이크가 켜지기 전 0.3~0.5초가 날아가 첫 단어가 잘린다.
+     잠깐 '준비' 를 보여주고 그 다음에 말하게 한다. */
+  setLive(id, "잠깐만요…", "ready");
+  setTimeout(() => {
+    if (c.aborted || cur !== c) return;
+    setLive(id, "지금 말하세요", "go");
+    setTimeout(() => {
+      if (c.aborted || cur !== c || c.heard) return;
+      setLive(id, what + "\n다 말했으면 ■ · 잘못 말했으면 ✕", "empty");
+    }, 1100);
+  }, 800);
 
   if (!useFallback) {
     try {
