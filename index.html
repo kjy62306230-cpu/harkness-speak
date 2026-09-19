@@ -1288,6 +1288,8 @@ const micEl = id => document.querySelector('[data-mic="'+id+'"]');
 const liveEl = id => document.querySelector('[data-live="'+id+'"]');
 /** 이 문장이 녹음 중이거나 채점 중인가 — redraw 가 화면을 갈아엎지 않도록 막는 데 쓴다 */
 const isBusy = id => !!(cur && cur.id === id) || grading.has(id);
+/** 지금까지 들린 말 전부 — 확정된 것 + 아직 확정 안 된 것 */
+const said = c => ((c.finalTx || "") + " " + (c.interim || "")).replace(/\s+/g," ").trim();
 
 function setLive(id,text,cls){
   const el = liveEl(id); if(!el) return;
@@ -1366,7 +1368,7 @@ function stopRec(){
      그래서 무슨 일이 있어도 채점으로 넘어가도록 보험을 건다. */
   const force = () => {
     if (c.aborted || c.grading || cur !== c) return;
-    finish(c, (c.finalTx || "").trim());
+    finish(c, said(c));
   };
 
   if (c.rec) {
@@ -1384,7 +1386,7 @@ function stopRec(){
 async function startRec(id){
   const c = { n: ++sess, id, pid: S.passage ? S.passage.id : null, mode: S.mode,
               rec:null, mr:null, stream:null, chunks:[],
-              finalTx:"", userStopped:false, restarts:0, aborted:false, grading:false };
+              finalTx:"", interim:"", userStopped:false, restarts:0, aborted:false, grading:false };
   cur = c; S.recording = true;
   const m=micEl(id); if(m){ m.classList.remove("busy"); m.classList.add("rec"); m.textContent="■"; }
   const card=document.querySelector('[data-id="'+id+'"]'); if(card) card.classList.add("act");
@@ -1416,6 +1418,9 @@ async function startRec(id){
           const t=e.results[i][0].transcript;
           if (e.results[i].isFinal) c.finalTx+=t; else itm+=t;
         }
+        /* 아이폰은 '확정' 신호가 안 오고 끝나는 일이 잦다.
+           화면에 보이던 글자를 버리면 학생은 분명히 말했는데 안 들렸다고 나온다. */
+        c.interim = itm;
         c.heard = true; c.restarts = 0;
         setLive(id,(c.finalTx+itm).trim()||"…");
       };
@@ -1435,10 +1440,10 @@ async function startRec(id){
       };
       rec.onend = () => {
         if (c.aborted || cur !== c) return;
-        if (c.userStopped) { finish(c, c.finalTx.trim()); return; }
+        if (c.userStopped) { finish(c, said(c)); return; }
         // 학생이 ■ 를 누르기 전에는 계속 듣는다. iOS 는 한 마디마다 끊겨서 이어 붙여야 한다.
-        if (c.restarts++ < 12) { try{ rec.start(); }catch(err){ finish(c, c.finalTx.trim()); } }
-        else finish(c, c.finalTx.trim());
+        if (c.restarts++ < 12) { try{ rec.start(); }catch(err){ finish(c, said(c)); } }
+        else finish(c, said(c));
       };
       rec.start(); return;
     } catch(err){ useFallback = true; c.rec = null; }
@@ -1489,8 +1494,18 @@ async function finish(c, transcript, audio, typed){
   if (cur === c) { cur = null; S.recording = false; }   // 마이크 자리를 즉시 비운다
 
   if (!transcript && !audio) {
-    c.aborted = true;
+    cur = null; S.recording = false;
     resetMic(id);
+    if (c.rec && !c.retriedAsAudio) {
+      /* 이 기기의 실시간 자막이 말을 못 잡은 것이다.
+         다음부터는 녹음해서 서버가 받아적는 방식으로 돌린다. */
+      useFallback = true;
+      c.retriedAsAudio = true;
+      setLive(id, "잘 안 잡혔어요. 방식을 바꿀게요 — 한 번만 다시 말해주세요.", "empty");
+      setTimeout(() => { if (!grading.has(id) && !cur) toggleMic(id); }, 900);
+      return;
+    }
+    c.aborted = true;
     setLive(id, "아무 말도 들리지 않았어요. 다시 눌러주세요.", "empty");
     return;
   }
