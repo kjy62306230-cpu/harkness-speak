@@ -1333,6 +1333,7 @@ function quotaBanner(){
 function killSession(c, msg){
   if (!c || c.aborted || c.grading) return;
   c.aborted = true;
+  stopBackup(c);
   try { if (c.rec) { c.rec.onend=null; c.rec.onresult=null; c.rec.onerror=null;
                      if (c.rec.abort) c.rec.abort(); else c.rec.stop(); } } catch(e){}
   try { if (c.mr && c.mr.state === "recording") { c.mr.onstop=null; c.mr.stop(); } } catch(e){}
@@ -1371,6 +1372,7 @@ function stopRec(){
     finish(c, said(c));
   };
 
+  stopBackup(c);
   if (c.rec) {
     try { c.rec.stop(); } catch(e){}
     setTimeout(force, 1200);
@@ -1446,7 +1448,11 @@ async function startRec(id){
         if (c.restarts++ < 12) { try{ rec.start(); }catch(err){ finish(c, said(c)); } }
         else finish(c, said(c));
       };
-      rec.start(); return;
+      rec.start();
+      /* 보험: 자막이 글자를 못 넘겨줄 때를 대비해 소리도 같이 담아 둔다.
+         이게 없으면 학생이 분명히 말했는데 '아무 말도 들리지 않았어요' 가 뜬다. */
+      backupAudio(c);
+      return;
     } catch(err){ useFallback = true; c.rec = null; }
   }
 
@@ -1454,6 +1460,37 @@ async function startRec(id){
 }
 
 /** 실시간 자막이 안 되는 기기용 - 녹음해서 서버에서 받아적는다 */
+/** 자막과 나란히 도는 백업 녹음. 실패해도 조용히 넘어간다. */
+async function backupAudio(c){
+  try {
+    if (!navigator.mediaDevices || !window.MediaRecorder) return;
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    if (c.aborted || cur !== c) { stream.getTracks().forEach(t=>t.stop()); return; }
+    c.bStream = stream;
+    const type = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
+    const mr = new MediaRecorder(stream,{mimeType:type});
+    const chunks = [];
+    c.bMr = mr; c.bType = type;
+    c.bReady = new Promise(res => {
+      mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+      mr.onstop = () => {
+        try { stream.getTracks().forEach(t=>t.stop()); } catch(e){}
+        if (!chunks.length) { res(null); return; }
+        const f = new FileReader();
+        f.onload = () => res({ mime:type, data:String(f.result).split(",")[1] });
+        f.onerror = () => res(null);
+        f.readAsDataURL(new Blob(chunks,{type}));
+      };
+    });
+    mr.start();
+  } catch(e){ /* 백업이 안 되면 자막만으로 간다 */ }
+}
+
+function stopBackup(c){
+  try { if (c.bMr && c.bMr.state === "recording") c.bMr.stop(); } catch(e){}
+  try { if (c.bStream) c.bStream.getTracks().forEach(t=>t.stop()); } catch(e){}
+}
+
 async function recordAudio(c){
   const id = c.id;
   if (c.aborted) return;
@@ -1494,19 +1531,17 @@ async function finish(c, transcript, audio, typed){
   const id = c.id;
   if (cur === c) { cur = null; S.recording = false; }   // 마이크 자리를 즉시 비운다
 
+  if (!transcript && !audio && c.bReady) {
+    // 자막이 글자를 못 넘겼다 - 담아둔 소리를 서버가 받아적게 한다
+    setLive(id, "소리로 받아적는 중이에요…", "empty");
+    stopBackup(c);
+    audio = await Promise.race([ c.bReady, new Promise(r => setTimeout(() => r(null), 6000)) ]);
+    if (c.aborted) return;
+  }
   if (!transcript && !audio) {
     cur = null; S.recording = false;
-    resetMic(id);
-    if (c.rec && !c.retriedAsAudio) {
-      /* 이 기기의 실시간 자막이 말을 못 잡은 것이다.
-         다음부터는 녹음해서 서버가 받아적는 방식으로 돌린다. */
-      useFallback = true;
-      c.retriedAsAudio = true;
-      setLive(id, "잘 안 잡혔어요. 방식을 바꿀게요 — 한 번만 다시 말해주세요.", "empty");
-      setTimeout(() => { if (!grading.has(id) && !cur) toggleMic(id); }, 900);
-      return;
-    }
     c.aborted = true;
+    resetMic(id);
     setLive(id, "아무 말도 들리지 않았어요. 다시 눌러주세요.", "empty");
     return;
   }
