@@ -1092,6 +1092,7 @@ function renderQsel(){
 $("#qsel").onchange = (e) => { abortRec(); openPassage(e.target.value); };
 
 async function openPassage(id){
+  S.epoch = (S.epoch||0) + 1;
   S.results={}; S.open={}; S.filter="all"; S.hist={}; S.typing={}; S.retry={}; S.draft={}; S.htry={}; S.htryOpen={};
   const meta = S.qlist.find(q=>q.id===id);
   $("#qselBox").classList.toggle("hide", !S.qlist.length);
@@ -1108,8 +1109,17 @@ async function openPassage(id){
 
   renderStudy();
   // 지난번 이 지문에서 말했던 결과 이어붙이기
+  await loadHist(id);
+  if (Object.keys(S.results).length) renderStudy();
+  resumeJobs();
+}
+
+/** 이 지문에서 내가 했던 기록 전부를 불러와 결과·히스토리에 채운다 */
+async function loadHist(id){
   try {
     const h = await fn("tr-history", { token:S.token, passage_id:id, limit:400 });
+    if (!S.passage || S.passage.id !== id) return;
+    S.results = {}; S.hist = {};
     const seen = {}, hh = {};
     (h.rows||[]).forEach(a => {
       if (a.mode !== S.mode) return;
@@ -1125,11 +1135,11 @@ async function openPassage(id){
       arr.forEach((v,i)=>{ if(!v.n) v.n = i+1; });
       S.hist[k] = arr;
     });
-    if (Object.keys(S.results).length) renderStudy();
   } catch(e){}
 }
 
 function startPassage(passage, sentences){
+  S.epoch = (S.epoch||0) + 1;
   S.passage = passage; S.sentences = sentences;
   S.results={}; S.open={}; S.filter="all"; S.qlist=[]; S.hist={}; S.typing={}; S.retry={}; S.draft={}; S.htry={}; S.htryOpen={};
   $("#qselBox").classList.add("hide");
@@ -1416,6 +1426,63 @@ const grading = new Map();  // 채점 중인 세션들 — 문장마다 따로, 
 
 /* 한꺼번에 너무 많이 보내면 AI 쪽에서 요청이 몰렸다고 막는다.
    두 개까지만 보내고 나머지는 줄을 세운다. 학생은 계속 녹음할 수 있다. */
+/* ===== 채점 맡긴 것들 — 새로고침·폰 꺼짐에도 기억해 두었다가 다시 받아온다 ===== */
+const PEND_KEY = "tr_grade_jobs";
+const newId = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+  : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, ch => { const r = Math.random()*16|0; return (ch==="x"?r:(r&3|8)).toString(16); });
+function pendList(){ try { return JSON.parse(localStorage.getItem(PEND_KEY) || "[]") || []; } catch(e){ return []; } }
+function pendSave(a){ try { localStorage.setItem(PEND_KEY, JSON.stringify(a.filter(j => Date.now() - j.at < 6*3600*1000))); } catch(e){} }
+function pendAdd(j){ const a = pendList().filter(x => x.job !== j.job); a.push(j); pendSave(a); }
+function pendDel(id){ pendSave(pendList().filter(x => x.job !== id)); }
+const liveJobs = new Set();          // 지금 이 화면의 finish() 가 기다리고 있는 것
+const pollers = new Map();           // 같은 작업을 두 번 조회하지 않게
+
+/** 서버에 맡긴 채점이 끝날 때까지 기다린다. 끝나면 채점 결과, 실패면 throw */
+function pollJob(job){
+  if (pollers.has(job.job)) return pollers.get(job.job);
+  const p = (async () => {
+    let wait = 1500, missing = 0;
+    for (let k = 0; k < 200; k++) {            // 화면이 켜져 있는 동안 최대 10분쯤
+      await new Promise(z => setTimeout(z, wait));
+      wait = Math.min(4000, wait + 400);
+      let j;
+      try { j = await fn("tr-grade", { token:S.token, action:"job", job_id:job.job }); }
+      catch(e){ if (e.status === 401 || e.status === 403) throw e; continue; }   // 잠깐 끊긴 건 다시 본다
+      if (j.status === "pending") continue;
+      if (j.status === "done" && j.result) return j.result;
+      if (j.status === "missing") { if (++missing < 3) continue;
+        const e = new Error("채점 기록을 찾지 못했어요. 다시 눌러 주세요."); e.data = {}; throw e; }
+      const e = new Error(j.error || "채점이 잠시 안 됐어요. 다시 눌러 주세요.");
+      e.data = { unclear: j.status === "unclear" || !!j.unclear, quota: !!j.quota, transcript: j.transcript };
+      throw e;
+    }
+    const e = new Error("채점이 너무 오래 걸려요. 잠시 뒤 이 지문을 다시 열어 보세요."); e.data = {}; throw e;
+  })();
+  pollers.set(job.job, p);
+  p.then(() => pollers.delete(job.job), () => pollers.delete(job.job));
+  return p;
+}
+
+/** 지문을 열었을 때, 이 지문에서 채점 중이던 문장이 있으면 '채점 중' 으로 보여주고 결과를 받아온다 */
+function resumeJobs(){
+  if (!S.passage) return;
+  const pid = S.passage.id, mode = S.mode;
+  pendList().filter(j => j.pid === pid && j.mode === mode).forEach(j => {
+    const m = micEl(j.sid);
+    if (m) { m.classList.add("busy"); m.innerHTML = '<span class="spin"></span>'; }
+    setLive(j.sid, "채점하는 중이에요… (아까 맡긴 채점을 받아오는 중)", "empty");
+    if (liveJobs.has(j.job)) return;           // 이 화면에서 기다리던 거면 거기서 마무리한다
+    if (!grading.has(j.sid)) grading.set(j.sid, { resumed:true, job:j.job });
+    pollJob(j).then(() => null, e => e).then(err => {
+      if (!err || !(err.status === 401 || err.status === 403)) pendDel(j.job);
+      if (grading.get(j.sid) && grading.get(j.sid).job === j.job) grading.delete(j.sid);
+      if (!S.passage || S.passage.id !== pid || S.mode !== mode) return;
+      if (err) { resetMic(j.sid); setLive(j.sid, err.message, "empty"); return; }
+      loadHist(pid).then(() => { resetMic(j.sid); redraw(j.sid); refreshFoot(); });
+    });
+  });
+}
+
 const MAX_PARALLEL = 2;
 let running = 0; const waiting = [];
 function takeSlot(){
@@ -1683,6 +1750,7 @@ function typedSession(id){
 
 async function finish(c, transcript, audio, typed){
   if (!c || c.aborted) return;
+  const epoch = S.epoch;
   const id = c.id;
   if (cur === c) { cur = null; S.recording = false; }   // 마이크 자리를 즉시 비운다
 
@@ -1726,24 +1794,36 @@ async function finish(c, transcript, audio, typed){
     if (transcript) body.transcript = transcript;
     if (audio && !typed) body.audio = audio;
 
-    /* 요청이 몰리면(429) 서버가 재시도 가능이라고 알려준다. 학생이 다시 누르지 않아도 되게
-       조용히 두 번까지 더 시도한다. */
-    let r = null, lastErr = null;
-    for (let k = 0; k < 3; k++) {
-      try { r = await fn("tr-grade", body); lastErr = null; break; }
+    /* 채점은 서버에 '맡기고' 결과만 받아온다.
+       맡기는 건 2~3초면 끝나고, 그 뒤로는 다른 지문으로 가든 폰이 꺼지든 서버가 끝까지 채점해 둔다. */
+    const job = { job: newId(), sid:id, pid:c.pid, mode:c.mode, typed:!!typed, at:Date.now() };
+    body.job_id = job.job;
+    let lastErr = null;
+    for (let k = 0; k < 5; k++) {
+      try { await fn("tr-grade", body); lastErr = null; break; }
       catch(err){
         lastErr = err;
-        if (err.data && err.data.quota) break;          // 하루 한도 소진 — 기다려도 안 풀린다
-        if (!(err.data && err.data.retryable) || c.aborted) break;
-        setLive(id, "채점이 밀리고 있어요. 다시 시도하는 중… ("+(k+2)+"/3)", "empty");
-        await new Promise(z => setTimeout(z, 2500 * (k+1)));
+        if (err.status === 401 || (err.data && err.data.quota)) break;
+        if (err.status && err.status < 500 && err.status !== 429) break;   // 다시 해도 안 되는 오류
+        setLive(id, "인터넷이 불안정해요. 다시 보내는 중… ("+(k+2)+"/5)", "empty");
+        await new Promise(z => setTimeout(z, 2000 * (k+1)));
       }
     }
-    freeSlot(); c.slot = false;
-    if (lastErr) throw lastErr;
+    if (lastErr) { freeSlot(); c.slot = false; throw lastErr; }
+    pendAdd(job); liveJobs.add(job.job);
+    setLive(id, "채점하는 중이에요… 다른 문장·다른 지문으로 가도 채점은 계속돼요", "empty");
+    let r;
+    try { r = await pollJob(job); }
+    catch(e){ if (!(e.status === 401 || e.status === 403)) pendDel(job.job); throw e; }
+    finally { liveJobs.delete(job.job); freeSlot(); c.slot = false; }
+    pendDel(job.job);
     release();
     // 그 사이 다른 지문으로 넘어갔으면 화면은 건드리지 않는다 (기록은 이미 저장됨)
     if (c.aborted || !S.passage || S.passage.id !== c.pid || S.mode !== c.mode) return;
+    if (S.epoch !== epoch) {   // 그 사이 지문을 나갔다 들어왔다 — 기록은 서버에 있으니 다시 불러온다
+      loadHist(c.pid).then(() => { resetMic(id); redraw(id); refreshFoot(); });
+      return;
+    }
     S.results[id] = r;
     S.retry[id] = false;
     delete S.draft[id];
@@ -2183,7 +2263,10 @@ async function loadRoster(){
       "<span style='opacity:.85'>홈 화면 아이콘을 지우고 다시 추가하면 사파리로 열립니다.</span>";
     document.body.prepend(w);
   }
-  document.addEventListener("visibilitychange", () => { if(document.hidden) abortRec("녹음이 중단됐어요. 다시 눌러주세요."); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) abortRec("녹음이 중단됐어요. 다시 눌러주세요.");
+    else if (S.view === "study") resumeJobs();   // 폰을 다시 켜면 맡겨둔 채점을 바로 받아온다
+  });
   // 빈 곳을 누르면 열려 있던 ⋯ 메뉴는 닫는다
   document.addEventListener("click", () => { $$("[data-menu]").forEach(x => x.classList.add("hide")); });
 })();
