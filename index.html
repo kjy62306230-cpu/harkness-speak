@@ -218,6 +218,12 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
 .modal .ft button{flex:1;padding:12px;border-radius:12px;font-weight:800;font-size:14px}
 .modal .ft .go{background:var(--pri);color:#fff}
 .modal .ft .no{border:1px solid var(--line);color:var(--tx2)}
+.rfilt{display:flex;gap:6px;margin:0 0 10px}
+.rfilt button{padding:7px 12px;border-radius:99px;border:1px solid var(--line);font-size:12.5px;font-weight:700;color:var(--tx2)}
+.rfilt button.on{background:var(--pri);border-color:var(--pri);color:#fff}
+.rrow .sub{display:none}
+.rrow.open .sub{display:block}
+.rrow .full{font-size:13.5px;line-height:1.55;margin-top:2px;word-break:keep-all}
 .retryhint{margin:0 14px 12px;padding:10px 12px;border-radius:11px;background:var(--mid-w);
   border:1px solid var(--mid-b);color:var(--mid);font-size:12.5px;line-height:1.55;font-weight:600}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(225,29,72,.42)}50%{box-shadow:0 0 0 11px rgba(225,29,72,0)}}
@@ -431,7 +437,8 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
       <div id="weak" class="card" style="padding:14px"><span class="muted">불러오는 중…</span></div>
     </div>
     <div class="sec">
-      <p class="label">최근 연습</p>
+      <p class="label">내가 해석한 기록 전체</p>
+      <div class="rfilt" id="rfilt"></div>
       <div id="recent"></div>
     </div>
   </div>
@@ -441,7 +448,7 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
     <div class="tabs">
       <button data-tab="students" class="on">학생별 약점</button>
       <button data-tab="inactive">안 한 학생</button>
-      <button data-tab="wrong">틀린 문장</button>
+      <button data-tab="wrong">전체 기록</button>
       <button data-tab="roster">학생 관리</button>
     </div>
     <div class="sec"><div class="stat" id="astat"></div></div>
@@ -1742,17 +1749,43 @@ function weakHtml(kinds){
     '<div class="prog"><i style="width:'+Math.round(v/max*100)+'%"></i></div>'+
     '<span class="tiny" style="font-weight:700">'+v+'회</span></div>').join("");
 }
+/* 기록 필터 — 전체 / 통과 / 틀린 것 */
+const RF = [["all","전체"],["pass","통과(80점↑)"],["wrong","틀린 것만"]];
+function rfiltHtml(key, rows){
+  const n = { all:rows.length, pass:rows.filter(r=>r.verdict==="pass").length };
+  n.wrong = n.all - n.pass;
+  return RF.map(([k,l]) => '<button data-rf="'+k+'" data-rk="'+key+'"'+(S[key]===k?' class="on"':'')+'>'+l+' '+n[k]+'</button>').join("");
+}
+const rfPick = (rows, f) => f==="pass" ? rows.filter(r=>r.verdict==="pass") : f==="wrong" ? rows.filter(r=>r.verdict!=="pass") : rows;
+
+/** 학생 본인 기록 — 100점 받은 것까지 전부. 누르면 채점 내용 전체가 펼쳐진다 */
 function rowsHtml(rows, showName){
   if (!rows.length) return '<span class="muted">아직 기록이 없어요.</span>';
-  return rows.slice(0,15).map(r =>
-    '<div class="card" style="padding:12px;margin-bottom:8px;display:flex;gap:11px;align-items:center">'+
+  return rows.slice(0,300).map((r,i) => {
+    const sen = r.tr_sentences || {};
+    return '<div class="card rrow" data-rrow="'+i+'" style="padding:12px;margin-bottom:8px;cursor:pointer">'+
+      '<div style="display:flex;gap:11px;align-items:flex-start">'+
       '<div class="pill '+r.verdict+'">'+r.score+'</div>'+
       '<div style="flex:1;min-width:0">'+
         (showName ? '<div style="font-size:12px;font-weight:700;color:var(--pri)">'+esc(r.student_name||"이름없음")+'</div>' : '')+
-        '<div style="font-size:13px;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.transcript)+'</div>'+
-        '<div class="tiny">'+(r.tr_passages?esc(r.tr_passages.title)+' · ':'')+(r.mode==="en2ko"?"해석":"영작")+' · '+
-          new Date(r.created_at).toLocaleDateString("ko-KR",{month:"numeric",day:"numeric"})+'</div>'+
-      '</div></div>').join("");
+        '<div class="tiny">'+(r.tr_passages?esc(r.tr_passages.title)+' · ':'')+(sen.idx!=null?'문장 '+(sen.idx+1)+' · ':'')+
+          (r.mode==="en2ko"?"해석":"영작")+' · '+
+          new Date(r.created_at).toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"numeric",minute:"2-digit"})+'</div>'+
+        (sen.en ? '<div class="tiny" style="margin-top:3px;color:var(--tx2)">'+esc(sen.en)+'</div>' : '')+
+        '<div class="full"><b style="font-size:11.5px;color:var(--tx3)">내가 '+(r.input_mode==="typed"?"적은":"말한")+' 것 · </b>'+esc(r.transcript)+'</div>'+
+      '</div></div>'+
+      '<div class="sub">'+
+        (sen.ko_ref ? '<div class="ln" style="margin-top:9px"><span class="k">모범</span><span style="color:var(--tx2)">'+esc(sen.ko_ref)+'</span></div>' : '')+
+        attemptHtml(r, 1, 1)+'</div>'+
+      '<div class="tiny" style="text-align:right;margin-top:4px;color:var(--pri)">자세히 보기 ›</div>'+
+    '</div>';
+  }).join("");
+}
+function bindRows(box, rows){
+  box.querySelectorAll("[data-rrow]").forEach(el => el.onclick = () => {
+    el.classList.toggle("open");
+    el.lastElementChild.textContent = el.classList.contains("open") ? "접기 ‹" : "자세히 보기 ›";
+  });
 }
 
 async function loadReport(){
@@ -1761,7 +1794,16 @@ async function loadReport(){
     const j = await fn("tr-history", { token:S.token, limit:400 });
     $("#stat").innerHTML = statHtml(j.stats);
     $("#weak").innerHTML = weakHtml(j.stats.kinds);
-    $("#recent").innerHTML = rowsHtml(j.rows, false);
+    S.rfMine = S.rfMine || "all";
+    const draw = () => {
+      const rows = j.rows || [];
+      $("#rfilt").innerHTML = rfiltHtml("rfMine", rows);
+      const pick = rfPick(rows, S.rfMine);
+      $("#recent").innerHTML = rowsHtml(pick, false);
+      bindRows($("#recent"), pick);
+      $$('[data-rk="rfMine"]').forEach(b => b.onclick = () => { S.rfMine = b.dataset.rf; draw(); });
+    };
+    draw();
   } catch(e){ $("#weak").innerHTML = '<span class="muted">'+esc(e.message)+'</span>'; }
 }
 
@@ -1807,8 +1849,10 @@ function renderAdmin(){
         : '<span class="muted">전원이 최근에 연습했어요 👏</span>');
   }
   else {
-    const wrong = (d.rows||[]).filter(r => r.verdict !== "pass").slice(0, 40);
-    $("#apanel").innerHTML = wrong.length ? wrong.map(r => {
+    S.rfAll = S.rfAll || "all";
+    const all = d.rows || [];
+    const wrong = rfPick(all, S.rfAll).slice(0, 150);
+    $("#apanel").innerHTML = '<div class="rfilt">'+rfiltHtml("rfAll", all)+'</div>' + (wrong.length ? wrong.map(r => {
       const f = r.feedback || {}, sen = r.tr_sentences || {}, pas = r.tr_passages || {};
       const errs = (f.errors||[]).map(e =>
         '<div style="margin-top:7px;padding:8px 10px;border-radius:9px;background:var(--bad-w);border:1px solid var(--bad-b)">'+
@@ -1821,8 +1865,10 @@ function renderAdmin(){
         (sen.en ? '<div class="en">'+esc(sen.en)+'</div>' : '')+
         '<div class="ln"><span class="k">학생</span><span>'+esc(r.transcript)+'</span></div>'+
         (sen.ko_ref ? '<div class="ln"><span class="k">모범</span><span style="color:var(--tx2)">'+esc(sen.ko_ref)+'</span></div>' : '')+
+        (r.score < 100 && f.why_not_full ? '<div class="deduct" style="margin-top:7px"><b>100점이 아닌 이유 · '+(100-r.score)+'점</b>'+esc(f.why_not_full)+'</div>' : '')+
         errs+'</div>';
-    }).join("") : '<span class="muted">틀린 기록이 없어요.</span>';
+    }).join("") : '<span class="muted">해당 기록이 없어요.</span>');
+    $$('[data-rk="rfAll"]').forEach(b => b.onclick = () => { S.rfAll = b.dataset.rf; renderAdmin(); });
   }
 }
 
@@ -1949,6 +1995,7 @@ function attemptHtml(t, nth, total){
         '<div class="jrow '+(f.structure_ok?"y":"n")+'"><span class="ic">'+(f.structure_ok?"○":"✕")+'</span>'+
           '<span class="jt"><b>구조 파악</b>'+esc(f.structure_note||"")+'</span></div>'+
       '</div>' : '')+
+    (t.score < 100 && f.why_not_full ? '<div class="deduct" style="margin-top:8px"><b>100점이 아닌 이유 · '+(100-t.score)+'점</b>'+esc(f.why_not_full)+'</div>' : '')+
     errs+
     (f.good ? '<div class="gblk"><b>잘한 점 &nbsp;</b>'+esc(f.good)+'</div>' : '')+
     (f.tip ? '<div class="tip">'+esc(f.tip)+'</div>' : '')+
