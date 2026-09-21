@@ -893,7 +893,7 @@ async function handleFiles(files){
     } else if (noteText) {
       jobs.push({ title: notes[0].name, text: noteText });
     }
-    if (imgs.length) jobs.push({ title: (files.find(f=>f.type.indexOf("image/")===0)||files[0]).name.replace(/\.[^.]+$/,""), files: imgs });
+    if (imgs.length) jobs.push({ title: (files.find(f=>f.type.indexOf("image/")===0)||files[0]).name.replace(/\.[^.]+$/,""), files: imgs, scan: true });
 
     /* 3) 하나씩 올린다 */
     let first = null, failed = [];
@@ -903,9 +903,27 @@ async function handleFiles(files){
         ? (i+1) + " / " + jobs.length + " — " + jobs[i].title.slice(0,18) + " 나누는 중…"
         : (big ? "긴 자료를 나눠 읽는 중… (1~2분)" : "문항 나누는 중… (20~40초)"));
       try {
-        const j = await fn("tr-split", Object.assign({ token: S.token }, jobs[i]));
-        if (!first) first = j.exam;
-        if (j.truncated) failed.push(jobs[i].title + " (일부만 읽힘)");
+        if (jobs[i].scan && jobs[i].files.length > 4) {
+          /* 사진이 많으면 4장씩 끊어 보내고 같은 시험지에 이어 붙인다 (한 번에 보내면 뒷장을 빼먹는다) */
+          const F = jobs[i].files, N = Math.ceil(F.length / 4);
+          let examId = null, miss = [];
+          for (let k = 0; k < N; k++) {
+            dropBusy("스캔본 문항 나누는 중… " + (k+1) + " / " + N + " 묶음");
+            const part = { token:S.token, title:jobs[i].title, files:F.slice(k*4, k*4+4) };
+            if (examId) part.exam_id = examId;
+            let j = null;
+            for (let t = 0; t < 2 && !j; t++) {
+              try { j = await fn("tr-split", part); } catch(e){ if (t) miss.push((k*4+1)+"~"+Math.min(F.length,k*4+4)+"장"); }
+            }
+            if (j) { examId = j.exam.id; if (!first) first = j.exam; }
+          }
+          if (!examId) throw new Error("x");
+          if (miss.length) failed.push(jobs[i].title + " (" + miss.join(", ") + " 못 읽음)");
+        } else {
+          const j = await fn("tr-split", Object.assign({ token: S.token }, jobs[i]));
+          if (!first) first = j.exam;
+          if (j.truncated) failed.push(jobs[i].title + " (일부만 읽힘)");
+        }
       } catch(e){ failed.push(jobs[i].title); }
     }
 
@@ -937,13 +955,16 @@ async function readPdf(file){
     text += columnize(tc.items, vp.width) + "\n";
   }
   if (text.replace(/\s/g,"").length > 200) return { text, images: [] };
+  /* 스캔본(글자 없는 PDF)은 사진으로 읽는다.
+     예전엔 앞 6장만 읽어서 17장짜리 자료가 6문항만 들어갔다. 이제 전부 읽는다. */
   const images = [];
-  for (let i=1;i<=Math.min(pages,6);i++){
-    const page = await pdf.getPage(i), vp = page.getViewport({ scale: 2 });
+  for (let i=1;i<=Math.min(pages,40);i++){
+    dropBusy("스캔본 읽는 중… " + i + " / " + Math.min(pages,40) + "장");
+    const page = await pdf.getPage(i), vp = page.getViewport({ scale: 1.7 });
     const cv = document.createElement("canvas");
     cv.width = vp.width; cv.height = vp.height;
     await page.render({ canvasContext: cv.getContext("2d"), viewport: vp }).promise;
-    images.push({ mime:"image/jpeg", data: cv.toDataURL("image/jpeg",.82).split(",")[1] });
+    images.push({ mime:"image/jpeg", data: cv.toDataURL("image/jpeg",.78).split(",")[1] });
   }
   return { text:"", images };
 }
