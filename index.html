@@ -193,6 +193,31 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
 .deduct{margin:10px 0 0;padding:10px 12px;border-radius:11px;background:var(--mid-w);
   border:1px solid var(--mid-b);color:var(--mid);font-size:12.5px;line-height:1.6;font-weight:700}
 .deduct b{display:block;font-size:11px;opacity:.8;margin-bottom:3px;letter-spacing:.3px}
+.tbar{display:flex;gap:8px;margin:14px 0 4px}
+.tbar button{flex:1;padding:12px;border-radius:12px;font-size:13.5px;font-weight:800}
+.tbar .a{background:var(--pri);color:#fff}
+.tbar .b{border:1px solid var(--pri);color:var(--pri)}
+.grp{font-size:12px;font-weight:800;color:var(--tx3);margin:16px 2px 8px;letter-spacing:.3px}
+.asg{display:inline-block;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:6px;margin-left:6px;vertical-align:1px}
+.asg.all{background:var(--ok-w);color:var(--ok)}
+.asg.some{background:var(--pri-w);color:var(--pri)}
+.asg.none{background:var(--line2);color:var(--tx3)}
+.asg.gift{background:var(--mid-w);color:var(--mid)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:90;display:flex;align-items:flex-end;justify-content:center}
+.modal .box{background:var(--bg);width:100%;max-width:520px;max-height:82vh;border-radius:18px 18px 0 0;
+  display:flex;flex-direction:column;overflow:hidden}
+.modal .hd{padding:16px 16px 10px;border-bottom:1px solid var(--line2)}
+.modal .hd b{font-size:15px;display:block}
+.modal .hd span{font-size:12px;color:var(--tx3)}
+.modal .bd{overflow:auto;padding:6px 10px}
+.modal label{display:flex;align-items:center;gap:10px;padding:11px 8px;border-radius:10px;font-size:14px}
+.modal label:active{background:var(--line2)}
+.modal label small{color:var(--tx3);font-size:11.5px;margin-left:auto}
+.modal input[type=checkbox]{width:19px;height:19px;accent-color:var(--pri)}
+.modal .ft{display:flex;gap:8px;padding:12px 14px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--line2)}
+.modal .ft button{flex:1;padding:12px;border-radius:12px;font-weight:800;font-size:14px}
+.modal .ft .go{background:var(--pri);color:#fff}
+.modal .ft .no{border:1px solid var(--line);color:var(--tx2)}
 .retryhint{margin:0 14px 12px;padding:10px 12px;border-radius:11px;background:var(--mid-w);
   border:1px solid var(--mid-b);color:var(--mid);font-size:12.5px;line-height:1.55;font-weight:600}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(225,29,72,.42)}50%{box-shadow:0 0 0 11px rgba(225,29,72,0)}}
@@ -330,6 +355,9 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
 
   <!-- ===== 홈 ===== -->
   <div id="v-home" class="hide">
+    <div class="tbar hide" id="teacherBar">
+      <button class="a" id="tbStudents">👥 학생 관리 · 기록</button>
+    </div>
     <div class="drop" id="drop">
       <div class="ico">📄</div>
       <b>시험지를 넣어주세요</b>
@@ -350,7 +378,6 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
     </div>
 
     <div class="sec" id="examBox">
-      <p class="label">저장된 시험지</p>
       <div class="plist" id="elist"></div>
     </div>
 
@@ -360,9 +387,7 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
     </div>
 
     <div class="sec"><button class="btn ghost sm" id="toReport">내 기록 보기</button></div>
-    <div class="sec hide" id="adminHome">
-      <button class="btn sm" id="toAdminPanel">학생 기록·관리 보기</button>
-    </div>
+
   </div>
 
   <!-- ===== 시험지 안 문항 목록 ===== -->
@@ -480,7 +505,7 @@ $("#back").onclick = () => {
   else go("home");
 };
 /* 관리자 화면에서 뒤로 = 홈 */
-$("#adminOut").onclick = () => go("home");
+$("#adminOut").onclick = () => { syncRole(); go("home"); loadLists(); };
 function doLogout(){
   if (!confirm("로그아웃 할까요?")) return;
   fn("tr-auth", { action:"logout", token:S.token }).catch(()=>{});
@@ -589,18 +614,83 @@ $("#adminOk").onclick = async () => {
     save("token", S.token);
     $("#adminCode").value = "";
     $("#who").textContent = "선생님";
+    syncRole();
     go("admin"); loadAdmin();
   } catch(e){ showErr("#adminErr", esc(e.message)); }
   btn.disabled = false;
 };
 
-function enterApp(){
-  // 선생님도 홈에서 자료를 올릴 수 있어야 하므로 항상 홈으로 보낸다
-  $("#adminHome").classList.toggle("hide", !S.admin);
+/** 선생님/학생에 맞게 홈 화면 버튼을 맞춘다 — 홈으로 올 때마다 호출 */
+function syncRole(){
+  $("#teacherBar").classList.toggle("hide", !S.admin);
   $("#toReport").classList.toggle("hide", !!S.admin);
+}
+function enterApp(){
+  syncRole();
   go("home"); loadLists();
 }
-$("#toAdminPanel").onclick = () => { go("admin"); loadAdmin(); };
+$("#tbStudents").onclick = () => { go("admin"); loadAdmin(); };
+
+/* ================= 배정 ================= */
+function asgBadge(x){
+  if (!x.from_teacher) return "";
+  if (!S.admin) return '<span class="asg gift">선생님</span>';
+  if (x.assigned_all) return '<span class="asg all">전체 배정</span>';
+  const n = x.assign_count || 0;
+  return n ? '<span class="asg some">'+n+'명 배정</span>' : '<span class="asg none">배정 안 함</span>';
+}
+
+async function openAssign(examId){
+  const wrap = document.createElement("div");
+  wrap.className = "modal";
+  wrap.innerHTML = '<div class="box"><div class="hd"><b>불러오는 중…</b></div></div>';
+  document.body.appendChild(wrap);
+  const close = () => wrap.remove();
+  wrap.onclick = e => { if (e.target === wrap) close(); };
+  let j;
+  try { j = await fn("tr-list", { token:S.token, action:"assign_get", exam_id:examId }); }
+  catch(e){ wrap.querySelector(".hd").innerHTML = '<b>'+esc(e.message)+'</b>'; setTimeout(close,1600); return; }
+
+  const on = new Set(j.exam.assigned_to || []);
+  const all = !!j.exam.assigned_all;
+  const byClass = {};
+  j.students.forEach(st => (byClass[st.class_label || "반 미지정"] = byClass[st.class_label || "반 미지정"] || []).push(st));
+
+  wrap.querySelector(".box").innerHTML =
+    '<div class="hd"><b>'+esc(j.exam.title)+'</b><span>이 자료를 풀 학생을 고르세요</span></div>'+
+    '<div class="bd">'+
+      '<label style="font-weight:800"><input type="checkbox" id="asAll"'+(all?" checked":"")+'>전체 학생 <small>새로 들어오는 학생 포함</small></label>'+
+      '<div id="asList" style="'+(all?"opacity:.4;pointer-events:none":"")+'">'+
+      Object.keys(byClass).sort().map(cl =>
+        '<p class="grp" style="margin:12px 8px 4px">'+esc(cl)+
+          ' <a href="#" data-cls="'+esc(cl)+'" style="font-weight:700;margin-left:6px">반 전체</a></p>'+
+        byClass[cl].map(st => '<label><input type="checkbox" data-sid="'+st.id+'" data-c="'+esc(cl)+'"'+
+          (on.has(st.id)?" checked":"")+'>'+esc(st.name)+
+          '<small>'+esc([st.school, st.grade].filter(Boolean).join(" "))+'</small></label>').join("")
+      ).join("")+
+      (j.students.length ? '' : '<div class="muted" style="padding:14px">등록된 학생이 없어요.</div>')+
+      '</div></div>'+
+    '<div class="ft"><button class="no">취소</button><button class="go">저장</button></div>';
+
+  const allBox = wrap.querySelector("#asAll");
+  const list = wrap.querySelector("#asList");
+  allBox.onchange = () => { list.style.opacity = allBox.checked ? .4 : 1; list.style.pointerEvents = allBox.checked ? "none" : ""; };
+  wrap.querySelectorAll("[data-cls]").forEach(a => a.onclick = e => {
+    e.preventDefault();
+    const boxes = wrap.querySelectorAll('[data-c="'+a.dataset.cls+'"]');
+    const turnOn = [...boxes].some(b => !b.checked);
+    boxes.forEach(b => b.checked = turnOn);
+  });
+  wrap.querySelector(".no").onclick = close;
+  wrap.querySelector(".go").onclick = async () => {
+    const ids = [...wrap.querySelectorAll("[data-sid]")].filter(b => b.checked).map(b => b.dataset.sid);
+    const btn = wrap.querySelector(".go"); btn.disabled = true; btn.textContent = "저장 중…";
+    try {
+      await fn("tr-list", { token:S.token, action:"assign_set", exam_id:examId, student_ids:ids, all:allBox.checked });
+      close(); loadLists();
+    } catch(e){ btn.disabled = false; btn.textContent = "저장"; alert(e.message); }
+  };
+}
 
 /* ================= 목록 ================= */
 async function loadLists(){
@@ -626,26 +716,51 @@ async function loadLists(){
   } catch(e){}
 
   $("#examBox").classList.toggle("hide", !S.exams.length);
-  $("#elist").innerHTML = S.exams.map(x => {
+  const card = x => {
     const r = ranges[x.id] || {};
     const span = (r.min != null) ? (r.min === r.max ? r.min+"번" : r.min+"번 ~ "+r.max+"번") : "";
     return '<div class="card" style="padding:0;position:relative">'+
       '<div style="display:flex;align-items:center">'+
         '<button class="pitem" style="box-shadow:none;border:0;background:transparent;margin:0;flex:1;min-width:0" data-exam="'+x.id+'">'+
-          '<div class="t"><b>'+esc(x.title)+'</b><span>'+(span ? span+" · " : "")+
+          '<div class="t"><b>'+esc(x.title)+asgBadge(x)+'</b><span>'+(span ? span+" · " : "")+
           new Date(x.created_at).toLocaleDateString("ko-KR")+'</span></div>'+
           '<span class="n">'+(r.n || x.item_count)+'문항</span></button>'+
         '<button class="dots" data-dots="'+x.id+'" title="더보기">⋯</button>'+
       '</div>'+
       // 선생님이거나, 내가 올린 자료면 지울 수 있다
       '<div class="menu hide" data-menu="'+x.id+'">'+
+        (S.admin ? '<button data-assign="'+x.id+'"><span class="mi">👥</span>학생에게 배정</button>' : '')+
         '<button data-edown="'+x.id+'" data-t="'+esc(x.title)+'"><span class="mi">⤓</span>내려받기</button>'+
         (canEditExam(x)
           ? '<button class="danger" data-edel="'+x.id+'" data-t="'+esc(x.title)+'"><span class="mi">🗑</span>삭제</button>'
           : '<button disabled style="opacity:.35"><span class="mi">🗑</span>'+esc(x.created_by || "다른 사람")+'이 올린 자료</button>')+
       '</div></div>';
-  }).join("");
+  };
+
+  /* 선생님: 내 보관함 / 학생이 올린 것.  학생: 선생님이 준 것 / 내가 올린 것 */
+  const fromT = S.exams.filter(x => x.from_teacher);
+  const fromS = S.exams.filter(x => !x.from_teacher);
+  let html = "";
+  if (S.admin) {
+    html += '<p class="grp">📁 선생님 보관함 · '+fromT.length+'</p>';
+    html += fromT.length ? fromT.map(card).join("")
+      : '<div class="muted" style="padding:6px 4px 2px;font-size:12.5px">아직 올린 자료가 없어요. 위에 파일을 넣으면 여기 쌓여요.</div>';
+    if (fromS.length) {
+      const by = {};
+      fromS.forEach(x => (by[x.created_by || "이름 없음"] = by[x.created_by || "이름 없음"] || []).push(x));
+      html += '<p class="grp">🎒 학생이 올린 자료 · '+fromS.length+'</p>';
+      Object.keys(by).sort().forEach(n => {
+        html += '<p class="grp" style="margin:10px 4px 6px;font-weight:700">'+esc(n)+'</p>'+by[n].map(card).join("");
+      });
+    }
+  } else {
+    if (fromT.length) html += '<p class="grp">🎁 선생님이 준 자료 · '+fromT.length+'</p>'+fromT.map(card).join("");
+    if (fromS.length) html += '<p class="grp">내가 올린 자료 · '+fromS.length+'</p>'+fromS.map(card).join("");
+  }
+  $("#elist").innerHTML = html;
   $$("[data-exam]").forEach(b => b.onclick = () => openExam(b.dataset.exam));
+  $$("[data-assign]").forEach(b => b.onclick = e => { e.stopPropagation();
+    $$("[data-menu]").forEach(x => x.classList.add("hide")); openAssign(b.dataset.assign); });
 
   // ⋯ 열고 닫기 (한 번에 하나만)
   $$("[data-dots]").forEach(b => b.onclick = (e) => {
