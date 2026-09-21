@@ -1602,16 +1602,28 @@ async function startRec(id){
   await recordAudio(c);
 }
 
+/** 말소리용 마이크. 무선 이어폰처럼 소리가 작고 뭉개질 때 도움이 된다. 안 되면 기본값으로 */
+async function openMic(){
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio: {
+      echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 } });
+  } catch(e){
+    if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) throw e;
+    return await navigator.mediaDevices.getUserMedia({ audio:true });
+  }
+}
+const recOpts = type => { const o = { mimeType:type }; try { o.audioBitsPerSecond = 48000; } catch(e){} return o; };
+
 /** 실시간 자막이 안 되는 기기용 - 녹음해서 서버에서 받아적는다 */
 /** 자막과 나란히 도는 백업 녹음. 실패해도 조용히 넘어간다. */
 async function backupAudio(c){
   try {
     if (!navigator.mediaDevices || !window.MediaRecorder) return;
-    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    const stream = await openMic();
     if (c.aborted || cur !== c) { stream.getTracks().forEach(t=>t.stop()); return; }
     c.bStream = stream;
     const type = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
-    const mr = new MediaRecorder(stream,{mimeType:type});
+    const mr = new MediaRecorder(stream, recOpts(type));
     const chunks = [];
     c.bMr = mr; c.bType = type;
     c.bReady = new Promise(res => {
@@ -1639,11 +1651,11 @@ async function recordAudio(c){
   if (c.aborted) return;
   setLive(id, "녹음 중 — 다 말했으면 ■ 를 누르세요\n(이 기기는 말하는 중 자막이 안 떠요)", "empty");
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    const stream = await openMic();
     if (c.aborted || cur !== c) { stream.getTracks().forEach(t=>t.stop()); return; }
     c.stream = stream;
     const type = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
-    const mr = new MediaRecorder(stream,{mimeType:type}); c.mr = mr;
+    const mr = new MediaRecorder(stream, recOpts(type)); c.mr = mr;
     mr.ondataavailable = e => { if(e.data.size) c.chunks.push(e.data); };
     mr.onstop = async () => {
       try { stream.getTracks().forEach(t=>t.stop()); } catch(e){}
@@ -1681,6 +1693,13 @@ async function finish(c, transcript, audio, typed){
     audio = await Promise.race([ c.bReady, new Promise(r => setTimeout(() => r(null), 6000)) ]);
     if (c.aborted) return;
   }
+  if (transcript && !audio && !typed && c.bReady) {
+    /* 폰 자막은 무선 이어폰 소리를 자주 잘못 알아듣는다.
+       녹음해 둔 소리를 같이 보내면 서버가 지문 문맥을 알고 한 번 더 정확히 듣는다. */
+    stopBackup(c);
+    audio = await Promise.race([ c.bReady, new Promise(r => setTimeout(() => r(null), 3000)) ]);
+    if (c.aborted) return;
+  }
   if (!transcript && !audio) {
     cur = null; S.recording = false;
     c.aborted = true;
@@ -1704,7 +1723,8 @@ async function finish(c, transcript, audio, typed){
 
     const body = { token:S.token, sentence_id:id, passage_id:S.passage.id, mode:S.mode,
                    input_mode: typed ? "typed" : "voice" };
-    if (transcript) body.transcript = transcript; else body.audio = audio;
+    if (transcript) body.transcript = transcript;
+    if (audio && !typed) body.audio = audio;
 
     /* 요청이 몰리면(429) 서버가 재시도 가능이라고 알려준다. 학생이 다시 누르지 않아도 되게
        조용히 두 번까지 더 시도한다. */
@@ -2009,6 +2029,7 @@ function attemptHtml(t, nth, total){
         '<span style="font-size:13px;font-weight:700;display:block">'+esc(f.summary||"")+'</span>'+
       '</span></div>'+
     '<div class="said" style="margin-top:9px"><b>학생이 '+(t.input_mode==="typed"?"적은":"말한")+' 것</b>'+esc(t.transcript)+'</div>'+
+    (S.admin && f.stt_draft ? '<div class="tiny" style="margin-top:4px;color:var(--tx3)">폰 자막이 처음 들은 말: '+esc(f.stt_draft)+' → 녹음으로 다시 들음</div>' : '')+
     (f.meaning_note||f.structure_note ?
       '<div class="judge" style="margin-top:8px">'+
         '<div class="jrow '+(f.meaning_ok?"y":"n")+'"><span class="ic">'+(f.meaning_ok?"○":"✕")+'</span>'+
