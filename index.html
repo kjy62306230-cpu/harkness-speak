@@ -218,6 +218,12 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
 .modal .ft button{flex:1;padding:12px;border-radius:12px;font-weight:800;font-size:14px}
 .modal .ft .go{background:var(--pri);color:#fff}
 .modal .ft .no{border:1px solid var(--line);color:var(--tx2)}
+.alive{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:var(--tx3);margin-bottom:8px}
+.alive i{width:7px;height:7px;border-radius:50%;background:var(--bad);animation:blip 1.6s infinite}
+.alive.off i{background:var(--line);animation:none}
+.alive b{color:var(--bad)}
+.alive button{margin-left:auto;font-size:11.5px;font-weight:700;color:var(--tx3);border:1px solid var(--line);border-radius:99px;padding:4px 10px}
+@keyframes blip{0%,100%{opacity:1}50%{opacity:.25}}
 .rfilt{display:flex;gap:6px;margin:0 0 10px}
 .rfilt button{padding:7px 12px;border-radius:99px;border:1px solid var(--line);font-size:12.5px;font-weight:700;color:var(--tx2)}
 .rfilt button.on{background:var(--pri);border-color:var(--pri);color:#fff}
@@ -451,6 +457,7 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
       <button data-tab="wrong">전체 기록</button>
       <button data-tab="roster">학생 관리</button>
     </div>
+    <div class="sec" style="padding-bottom:0"><div class="alive" id="alive"></div></div>
     <div class="sec"><div class="stat" id="astat"></div></div>
     <div class="sec" id="apanel"><span class="muted">불러오는 중…</span></div>
     <div class="sec"><button class="btn ghost sm" id="adminOut">‹ 홈으로 (자료 올리기)</button></div>
@@ -503,16 +510,78 @@ function go(v){
     const q = (S.passage && S.passage.title) || "학습";
     $("#title").textContent = S.exam ? (S.exam.title + " · " + q) : q;
   } else $("#title").textContent = TITLES[v];
+  if (v === "admin") { adminSig = ""; if (liveOn) startLive(); liveNote(0); } else stopLive();
   window.scrollTo(0,0);
 }
-/* 학습 중이면 문항 목록으로, 목록이면 홈으로 */
-$("#back").onclick = () => {
+/* ===== 뒤로가기 =====
+   지금 보고 있는 화면을 한 칸씩 쌓아두고, ‹ 나 폰의 뒤로가기를 누르면 한 단계만 돌아간다.
+   새로고침해도 보던 화면이 그대로 열리게 마지막 화면을 저장해 둔다. */
+let restoring = false;
+S.depth = 0;
+function routeNow(){
+  return { v:S.view, mode:S.mode,
+    exam: S.exam ? S.exam.id : null,
+    passage: S.passage ? S.passage.id : null,
+    atab: S.adminTab,
+    nav: (S.nav && S.nav.level !== "list")
+      ? { level:S.nav.level, student:S.nav.student, studentName:S.nav.studentName, passage:S.nav.passage } : null };
+}
+function pushRoute(){
+  if (restoring) return;
+  const r = routeNow();
+  if (r.v === "login" || r.v === "adminlogin") return;
+  const cur = history.state;
+  if (cur && JSON.stringify(cur) === JSON.stringify(r)) return;
+  history.pushState(r, "");
+  S.depth++;
+  save("route", r);
+}
+/** 저장해 둔 화면으로 되돌린다 (뒤로가기·새로고침 둘 다 여기로 온다) */
+async function applyRoute(r){
+  if (!r || !S.me) { go("home"); loadLists(); return; }
+  restoring = true;
+  try {
+    if (r.mode && r.mode !== S.mode) {
+      S.mode = r.mode;
+      $$(".seg button").forEach(b=>b.classList.toggle("on", b.dataset.mode===r.mode));
+    }
+    if (r.v === "study" && r.passage) {
+      if (r.exam && (!S.exam || S.exam.id !== r.exam)) await openExam(r.exam);
+      await openPassage(r.passage);
+    } else if (r.v === "items" && r.exam) {
+      await openExam(r.exam);
+    } else if (r.v === "admin" && S.admin) {
+      go("admin");
+      if (r.atab && r.atab !== S.adminTab) {
+        S.adminTab = r.atab;
+        $$(".tabs button").forEach(x=>x.classList.toggle("on", x.dataset.tab===r.atab));
+      }
+      if (r.nav && r.nav.student) { await openStudent(r.nav.student, r.nav.studentName);
+        if (r.nav.level === "passage") { S.nav.level="passage"; S.nav.passage=r.nav.passage; renderStudents(); } }
+      else await loadAdmin();
+    } else if (r.v === "report") {
+      go("report"); loadReport();
+    } else {
+      syncRole(); go("home"); loadLists();
+    }
+  } finally { restoring = false; }
+  save("route", routeNow());
+}
+window.addEventListener("popstate", ev => {
   abortRec();
-  if (S.view === "study" && S.exam) { renderItems(); go("items"); }
-  else go("home");
-};
-/* 관리자 화면에서 뒤로 = 홈 */
-$("#adminOut").onclick = () => { syncRole(); go("home"); loadLists(); };
+  S.depth = Math.max(0, S.depth - 1);
+  applyRoute(ev.state);
+});
+/* ‹ 버튼 = 폰의 뒤로가기와 같게 (한 단계만) */
+function goBackOne(){
+  abortRec();
+  if (S.depth > 0) { history.back(); return; }
+  if (S.view === "study" && S.exam) { renderItems(); go("items"); pushRoute(); }
+  else if (S.view === "admin") { syncRole(); go("home"); loadLists(); pushRoute(); }
+  else { syncRole(); go("home"); loadLists(); pushRoute(); }
+}
+$("#back").onclick = goBackOne;
+$("#adminOut").onclick = goBackOne;
 function doLogout(){
   if (!confirm("로그아웃 할까요?")) return;
   fn("tr-auth", { action:"logout", token:S.token }).catch(()=>{});
@@ -636,7 +705,7 @@ function enterApp(){
   syncRole();
   go("home"); loadLists();
 }
-$("#tbStudents").onclick = () => { go("admin"); loadAdmin(); };
+$("#tbStudents").onclick = () => { go("admin"); loadAdmin(); pushRoute(); };
 
 /* ================= 배정 ================= */
 function asgBadge(x){
@@ -834,7 +903,7 @@ async function downloadExam(examId, title){
   } catch(e){ alert("내려받지 못했어요: " + e.message); }
 }
 
-$("#toReport").onclick = () => { go("report"); loadReport(); };
+$("#toReport").onclick = () => { go("report"); loadReport(); pushRoute(); };
 $("#toggleText").onclick = (e) => {
   e.preventDefault();
   const on = $("#textbox").classList.toggle("hide");
@@ -1031,6 +1100,7 @@ async function openExam(examId){
     await loadTried();
   } catch(e){ $("#ilist").innerHTML = '<div class="err">문항을 불러오지 못했어요.</div>'; return; }
   renderItems();
+  pushRoute();
 }
 
 function renderItems(){
@@ -1109,6 +1179,7 @@ async function openPassage(id){
 
   renderStudy();
   // 지난번 이 지문에서 말했던 결과 이어붙이기
+  pushRoute();
   await loadHist(id);
   if (Object.keys(S.results).length) renderStudy();
   resumeJobs();
@@ -1928,20 +1999,67 @@ async function loadReport(){
   } catch(e){ $("#weak").innerHTML = '<span class="muted">'+esc(e.message)+'</span>'; }
 }
 
+/* ===== 실시간 보기 — 학생이 해석을 끝내면 선생님 화면에 바로 올라온다 ===== */
+let adminTimer = null, adminSig = "", liveOn = true, liveAt = 0;
+const sigOf = rows => (rows && rows.length) ? rows.length + "|" + rows[0].id : "0";
+
+function liveNote(added){
+  const el = $("#alive"); if (!el) return;
+  if (!liveOn) { el.className = "alive off"; el.innerHTML = '<i></i>실시간 꺼짐 <button id="liveBtn">켜기</button>'; }
+  else {
+    const sec = liveAt ? Math.round((Date.now()-liveAt)/1000) : 0;
+    const when = added > 0 ? '<b>새 기록 '+added+'건</b>' : (sec < 15 ? "방금 확인" : sec + "초 전 확인");
+    el.className = "alive";
+    el.innerHTML = '<i></i>실시간으로 보는 중 · ' + when + ' <button id="liveBtn">끄기</button>';
+  }
+  const b = $("#liveBtn");
+  if (b) b.onclick = () => { liveOn = !liveOn; liveOn ? startLive() : stopLive(); liveNote(0); };
+}
+
+async function adminTick(){
+  if (!liveOn || !S.admin || S.view !== "admin" || document.hidden) return;
+  if (S.adminTab === "roster") return;
+  try {
+    const drill = S.nav && S.nav.level !== "list" && S.nav.student;
+    const j = await fn("tr-history", drill
+      ? { token:S.token, student_key:S.nav.student, limit:1500 }
+      : { token:S.token, limit:1000 });
+    if (S.view !== "admin") return;
+    const sig = sigOf(j.rows);
+    let added = 0;
+    if (sig !== adminSig) {
+      const y = window.scrollY;
+      const before = drill ? (S.nav.rows || []).length : ((S.adminData && S.adminData.rows) || []).length;
+      added = Math.max(0, (j.rows || []).length - before);
+      if (drill) { S.nav.rows = j.rows || []; renderStudents(); }
+      else { S.adminData = j; $("#astat").innerHTML = statHtml(j.stats); renderAdmin(); }
+      window.scrollTo(0, y);
+      adminSig = sig;
+    }
+    liveAt = Date.now();
+    liveNote(added);
+  } catch(e){}
+}
+function startLive(){ stopLive(); adminTick(); adminTimer = setInterval(adminTick, 8000); }
+function stopLive(){ if (adminTimer) clearInterval(adminTimer); adminTimer = null; }
+
 /* ================= 관리자 ================= */
 $$(".tabs button").forEach(b => b.onclick = () => {
   $$(".tabs button").forEach(x=>x.classList.remove("on"));
   b.classList.add("on"); S.adminTab = b.dataset.tab;
   S.nav = { level:"list", rows:[] };
-  renderAdmin(); window.scrollTo(0,0);
+  renderAdmin(); liveNote(0); window.scrollTo(0,0);
+  if (S.adminTab !== "roster" && liveOn) adminTick();
 });
 
 async function loadAdmin(){
   $("#apanel").innerHTML = '<span class="muted">불러오는 중…</span>';
   try {
     S.adminData = await fn("tr-history", { token:S.token, limit:1000 });
+    adminSig = sigOf(S.adminData.rows);
+    liveAt = Date.now();
     $("#astat").innerHTML = statHtml(S.adminData.stats);
-    renderAdmin();
+    renderAdmin(); liveNote(0);
   } catch(e){
     $("#apanel").innerHTML = '<div class="err">'+esc(e.message)+'</div>';
     if (e.status===401) { S.token=null; save("token",null); go("adminlogin"); }
@@ -2050,7 +2168,7 @@ function renderStudents(){
         '</button>';
       }).join("") : '<span class="muted">기록이 없어요.</span>');
 
-    $$("[data-pss]").forEach(b => b.onclick = () => { S.nav.level="passage"; S.nav.passage=b.dataset.pss; renderStudents(); window.scrollTo(0,0); });
+    $$("[data-pss]").forEach(b => b.onclick = () => { S.nav.level="passage"; S.nav.passage=b.dataset.pss; renderStudents(); pushRoute(); window.scrollTo(0,0); });
     bindNavBack();
     return;
   }
@@ -2129,12 +2247,14 @@ async function openStudent(key, name){
   try {
     const j = await fn("tr-history", { token:S.token, student_key:key, limit:1500 });
     S.nav = { level:"student", student:key, studentName:name, passage:null, rows:j.rows||[] };
-    renderStudents(); window.scrollTo(0,0);
+    adminSig = sigOf(j.rows); liveAt = Date.now();
+    renderStudents(); pushRoute(); liveNote(0); window.scrollTo(0,0);
   } catch(e){ $("#apanel").innerHTML = '<div class="err">'+esc(e.message)+'</div>'; }
 }
 
 function bindNavBack(){
   $$("[data-navback]").forEach(b => b.onclick = () => {
+    if (S.depth > 0) { history.back(); return; }
     S.nav.level = b.dataset.navback;
     if (S.nav.level === "list") S.nav = { level:"list", rows:[] };
     renderStudents(); window.scrollTo(0,0);
@@ -2251,6 +2371,8 @@ async function loadRoster(){
       S.me = { id: j.tr_student_id ?? null, name: j.name };
       $("#who").textContent = j.name;
       enterApp();
+      const last = load("route");
+      if (last && last.v && last.v !== "home") applyRoute(last);   // 새로고침해도 보던 화면 그대로
     }).catch(() => { S.token=null; save("token",null); go("login"); });
   } else go("login");
   /* 예전에 만든 홈 화면 아이콘은 여전히 앱 모드로 열린다 — 그때는 마이크가 막힌다 */
@@ -2266,6 +2388,7 @@ async function loadRoster(){
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) abortRec("녹음이 중단됐어요. 다시 눌러주세요.");
     else if (S.view === "study") resumeJobs();   // 폰을 다시 켜면 맡겨둔 채점을 바로 받아온다
+    else if (S.view === "admin") adminTick();     // 선생님 화면은 바로 새로 확인
   });
   // 빈 곳을 누르면 열려 있던 ⋯ 메뉴는 닫는다
   document.addEventListener("click", () => { $$("[data-menu]").forEach(x => x.classList.add("hide")); });
