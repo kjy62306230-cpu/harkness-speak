@@ -556,9 +556,9 @@ async function applyRoute(r){
         S.adminTab = r.atab;
         $$(".tabs button").forEach(x=>x.classList.toggle("on", x.dataset.tab===r.atab));
       }
+      await loadAdmin();          // 학생별 화면도 이 데이터가 있어야 그려진다
       if (r.nav && r.nav.student) { await openStudent(r.nav.student, r.nav.studentName);
         if (r.nav.level === "passage") { S.nav.level="passage"; S.nav.passage=r.nav.passage; renderStudents(); } }
-      else await loadAdmin();
     } else if (r.v === "report") {
       go("report"); loadReport();
     } else {
