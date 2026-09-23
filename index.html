@@ -230,6 +230,9 @@ textarea.field{min-height:150px;resize:vertical;line-height:1.7;font-size:14px}
 .rrow .sub{display:none}
 .rrow.open .sub{display:block}
 .rrow .full{font-size:13.5px;line-height:1.55;margin-top:2px;word-break:keep-all}
+.lockbar{margin:10px 14px 12px;padding:11px 13px;border-radius:12px;border:1px dashed var(--line);
+  background:var(--line2);color:var(--tx3);font-size:12.5px;font-weight:700;line-height:1.5}
+.hist.lock{opacity:.5}
 .retryhint{margin:0 14px 12px;padding:10px 12px;border-radius:11px;background:var(--mid-w);
   border:1px solid var(--mid-b);color:var(--mid);font-size:12.5px;line-height:1.55;font-weight:600}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(225,29,72,.42)}50%{box-shadow:0 0 0 11px rgba(225,29,72,0)}}
@@ -1277,6 +1280,9 @@ function footHtml(done, tot, wrong){
 
 function sentHtml(s,i){
   const r = S.results[s.id], hs = S.hist[s.id] || [];
+  /* 다시 해석하는 중에는 지난 채점을 못 보게 가린다 — 보고 따라 읽으면 연습이 안 된다.
+     이번 채점이 끝나면 저절로 다시 열린다. */
+  const lock = !!S.retry[s.id] || (cur && cur.id === s.id) || grading.has(s.id);
   const prompt = S.mode==="en2ko" ? s.en : (s.ko_ref || s.ko_literal || "");
   return '<div class="sent'+(r?" "+r.verdict:"")+'" data-id="'+s.id+'">'+
     '<div class="srow"><div class="snum">'+(i+1)+'</div>'+
@@ -1287,18 +1293,21 @@ function sentHtml(s,i){
       '</div></div>'+
     (s.filled ? '<div class="fillnote">✎ 빈칸을 채워 완성한 문장이에요'+
       (s.filled_part ? ' — <b>'+esc(s.filled_part)+'</b>' : '')+'</div>' : '')+
-    (hs.length ? '<div class="hist" data-htry="'+s.id+'">'+
+    (hs.length ? '<div class="hist'+(lock?" lock":"")+'"'+(lock?"":' data-htry="'+s.id+'"')+'>'+
         hs.map(h => '<span class="hb '+(h.verdict||"")+'">'+h.n+'차 '+h.score+'</span>').join(
           '<span class="hb" style="background:none;color:var(--tx3);padding:3px 0">\u2192</span>')+
-        '<span class="lbl">'+(S.htryOpen[s.id] ? "닫기"
-          : "지난 기록 "+hs.length+"회"+(hs[hs.length-1] && hs[hs.length-1].at ? " · "+fmtWhen(hs[hs.length-1].at) : ""))+
+        '<span class="lbl">'+(lock ? "\uD83D\uDD12 이번 해석을 마치면 열려요"
+          : (S.htryOpen[s.id] ? "닫기"
+          : "지난 기록 "+hs.length+"회"+(hs[hs.length-1] && hs[hs.length-1].at ? " · "+fmtWhen(hs[hs.length-1].at) : "")))+
         '</span></div>' : "")+
-    (S.htryOpen[s.id] ? htryHtml(s.id, hs) : "")+
+    (S.htryOpen[s.id] && !lock ? htryHtml(s.id, hs) : "")+
     (S.retry[s.id] ? '<div class="retryhint">다시 해석해 보세요 \u2014 이번 점수도 따로 남습니다.<br>'+
-      '<span style="font-weight:600;opacity:.85">지난 채점은 아래 \u2018자세히 보기\u2019 에 그대로 있어요. 먼저 말해보고 확인하면 더 좋아요.</span></div>' : "")+
+      '<span style="font-weight:600;opacity:.85">지난 채점은 잠시 가려뒀어요. 이번 해석을 마치면 다시 볼 수 있어요.</span></div>' : "")+
     (S.typing[s.id] ? typeHtml(s.id) : "")+
     '<div class="live hide" data-live="'+s.id+'"></div>'+
-    '<div data-res="'+s.id+'">'+(r ? barHtml(r,s) : "")+'</div></div>';
+    '<div data-res="'+s.id+'">'+(r ? (lock
+        ? '<div class="lockbar">\uD83D\uDD12 지난 채점('+r.score+'점)은 가려뒀어요 \u2014 이번 해석을 마치면 다시 볼 수 있어요</div>'
+        : barHtml(r,s)) : "")+'</div></div>';
 }
 
 function histHtml(hs){
@@ -1434,6 +1443,7 @@ function bindSent(){
   $$("[data-htry]").forEach(b => b.onclick = e => {
     e.stopPropagation();
     const id = b.dataset.htry;
+    if (S.retry[id] || grading.has(id) || (cur && cur.id === id)) return;
     S.htryOpen[id] = !S.htryOpen[id];
     redraw(id);
   });
@@ -1620,6 +1630,7 @@ function killSession(c, msg){
   try { if (c.mr && c.mr.state === "recording") { c.mr.onstop=null; c.mr.stop(); } } catch(e){}
   try { if (c.stream) c.stream.getTracks().forEach(t=>t.stop()); } catch(e){}
   if (cur === c) { cur = null; S.recording = false; }
+  if (S.autolock && S.autolock[c.id]) { delete S.autolock[c.id]; S.retry[c.id] = false; }
   resetMic(c.id);
   if (msg) setLive(c.id, msg, "empty");
   else { const lv = liveEl(c.id); if (lv) lv.classList.add("hide"); }
@@ -1634,6 +1645,11 @@ function toggleMic(id){
      앞 문장이 '채점 중'이면 그대로 두고 바로 다음 문장을 녹음한다.
      채점은 문장마다 따로 돌기 때문에 기다릴 필요가 없다. */
   if (cur) abortRec("녹음을 취소했어요.");
+  if (S.results[id] && !S.retry[id]) {
+    S.retry[id] = true; S.open[id] = false; S.htryOpen[id] = false;
+    S.autolock = S.autolock || {}; S.autolock[id] = true;   // 녹음을 그만두면 도로 열어준다
+    redraw(id);
+  }
   startRec(id);
 }
 
@@ -1891,6 +1907,8 @@ async function finish(c, transcript, audio, typed){
     release();
     // 그 사이 다른 지문으로 넘어갔으면 화면은 건드리지 않는다 (기록은 이미 저장됨)
     if (c.aborted || !S.passage || S.passage.id !== c.pid || S.mode !== c.mode) return;
+    S.retry[id] = false;
+    if (S.autolock) delete S.autolock[id];
     if (S.epoch !== epoch) {   // 그 사이 지문을 나갔다 들어왔다 — 기록은 서버에 있으니 다시 불러온다
       loadHist(c.pid).then(() => { resetMic(id); redraw(id); refreshFoot(); });
       return;
@@ -1914,6 +1932,7 @@ async function finish(c, transcript, audio, typed){
     if (c.slot) { freeSlot(); c.slot = false; }
     release();
     if (c.aborted || !S.passage || S.passage.id !== c.pid || S.mode !== c.mode) return;
+    if (S.autolock && S.autolock[id]) { delete S.autolock[id]; S.retry[id] = false; redraw(id); }
     resetMic(id);
     if (e.status === 401) { alert("로그인이 만료됐어요. 다시 로그인해 주세요."); S.token=null; save("token",null); resetLogin(); go("login"); return; }
     if (e.data && e.data.unclear) {   // 알아듣지 못한 경우 — 점수를 남기지 않는다
